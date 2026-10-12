@@ -60,6 +60,9 @@ async function handle(request: Request, env: Env): Promise<Response> {
   const db = sheets(env);
   if (url.pathname === "/api/health" && request.method === "GET") return json({ ok: true, service: "totalwork-hh-api" });
   if (url.pathname === "/api/auth/discord" && request.method === "GET") {
+    if (request.headers.get("sec-fetch-mode") === "navigate" || request.headers.get("accept")?.includes("text/html")) {
+      return new Response(null, { status: 302, headers: { Location: SITE } });
+    }
     if (!env.AUTH_DISCORD_ID || !env.AUTH_DISCORD_SECRET) return error("Discord login unavailable", 503);
     const state = await createOAuthState(env.AUTH_SECRET);
     const authorize = new URL("https://discord.com/oauth2/authorize");
