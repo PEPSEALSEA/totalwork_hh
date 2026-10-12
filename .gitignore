@@ -6,6 +6,7 @@ node_modules/
 .wrangler/
 out/
 dist/
+site-dist/
 build/
 coverage/
 *.tsbuildinfo
