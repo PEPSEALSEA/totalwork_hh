@@ -49,19 +49,11 @@ Spreadsheet ID `1AjOYO0EwPoUUOgUKjo47Dv0ZDuXccspJfYZtDDZdzP0` ถูกตั้
 
 ## Cloudflare
 
-GitHub Pages รองรับเฉพาะเว็บ static จึงรัน Discord OAuth, session cookie และ API ของโปรเจกต์นี้โดยตรงไม่ได้ หากเก็บโค้ดบน GitHub ให้เผยแพร่แอปจริงบน Cloudflare Workers เพื่อรักษาการตรวจสิทธิ์สมาชิกทั้ง 8 คน ฝั่ง GitHub ใช้เก็บ source code และ workflow ได้ โดย `.gitignore` ป้องกันไฟล์ env, private key และผล build ไม่ให้ถูก commit
+GitHub Pages รองรับเฉพาะเว็บ static จึงรัน Discord OAuth, session cookie และ API ของโปรเจกต์นี้โดยตรงไม่ได้ เว็บจริงเผยแพร่ผ่าน Cloudflare Workers เพื่อรักษาการตรวจสิทธิ์สมาชิกทั้ง 8 คน GitHub ใช้เก็บ source code โดย `.gitignore` ป้องกันไฟล์ env, private key และผล build ไม่ให้ถูก commit
 
 เว็บจริงอยู่ที่ [totalwork-hh.sealseapep.workers.dev](https://totalwork-hh.sealseapep.workers.dev) และตรวจแล้วว่าหน้า login ตอบกลับได้ หน้าพื้นที่ทำงานส่งผู้ที่ยังไม่ล็อกอินไป `/login` ส่วน API แจ้งเตือนตอบ 401 การล็อกอิน Discord จริงต้องเพิ่ม redirect URI ข้างต้นใน Discord Developer Portal ก่อน
 
-`npm run dev:vinext` และ `npm run build:vinext` ใช้ vinext ตาม [คู่มือ Cloudflare สำหรับ Next.js](https://developers.cloudflare.com/workers/framework-guides/web-apps/nextjs/) การ deploy โค้ดทำผ่าน GitHub Actions ใน `.github/workflows/deploy-cloudflare.yml`
-
-Workflow จะรันเมื่อ push เข้า `main` และกดรันเองได้ หลังตั้งค่าต่อไปนี้ใน GitHub repository:
-
-1. Actions secret `CLOUDFLARE_ACCOUNT_ID` ตั้งไว้แล้ว
-2. สร้าง Cloudflare API token สิทธิ์ **Edit Cloudflare Workers** ที่จำกัดเฉพาะบัญชีนี้ แล้วบันทึกเป็น Actions secret `CLOUDFLARE_API_TOKEN`
-3. ตั้ง Actions variable `CLOUDFLARE_DEPLOY_ENABLED` เป็น `true` เพื่อเปิด deploy อัตโนมัติ
-
-Worker secrets สำหรับ Discord และ Google Sheets เก็บใน Cloudflare อยู่แล้ว ไม่ต้องคัดลอกไป GitHub หลังตั้งค่าเสร็จ ให้กด **Actions → Deploy to Cloudflare Workers → Run workflow** หนึ่งครั้งเพื่อตรวจการ deploy แล้วการ push ครั้งถัดไปจะ deploy เอง
+`npm run dev:vinext` และ `npm run build:vinext` ใช้ vinext ตาม [คู่มือ Cloudflare สำหรับ Next.js](https://developers.cloudflare.com/workers/framework-guides/web-apps/nextjs/) การอัปเดตเว็บทำจากเครื่องที่ล็อกอิน Wrangler แล้ว: build ด้วย Node.js 22.18 ขึ้นไป แล้วรัน `npm run deploy:wrangler` GitHub ไม่ได้ deploy เว็บนี้
 
 Cloudflare config รุ่นที่ติดตั้งต้องใช้ Node.js **22.18 ขึ้นไป** เครื่องนี้มี Node 22.16 จึงใช้ Node 22.18 ชั่วคราวเพื่อตรวจ build ของ Worker แล้วผ่าน
 
