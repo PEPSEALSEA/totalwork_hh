@@ -43,7 +43,7 @@ Spreadsheet ID `1AjOYO0EwPoUUOgUKjo47Dv0ZDuXccspJfYZtDDZdzP0` ถูกตั้
 
 1. ใน Discord Developer Portal เพิ่ม OAuth2 redirect URI `http://localhost:3000/api/auth/callback/discord` และ `https://totalwork-hh.sealseapep.workers.dev/api/auth/callback/discord` เพื่อให้ล็อกอินทั้งในเครื่องและเว็บจริงได้
 2. หมุนเวียน Discord Client Secret และ Bot Token ที่เคยส่งผ่านแชต แล้วอัปเดต `.env.local`, `.dev.vars` และ Cloudflare Worker secrets ให้ตรงกัน ระบบแจ้งเตือนในเว็บยังไม่ใช้ Bot Token
-3. Cloudflare Worker มี env ทั้ง 7 ตัวจาก `.env.local` เป็น `secret_text` แล้ว เมื่อต้องอัปเดตค่าบน Worker ให้ build แล้วใช้ `wrangler deploy --config wrangler.jsonc --secrets-file .env.local` โดยอย่า commit ไฟล์ env
+3. Cloudflare Worker มี env ทั้ง 7 ตัวจาก `.env.local` เป็น `secret_text` แล้ว เมื่อต้องอัปเดตค่าบน Worker ให้ใช้ `wrangler secret` หรือ deploy พร้อม `--secrets-file .env.local` โดยอย่า commit ไฟล์ env
 
 ไฟล์ `.env.local` และ `.dev.vars` ถูก ignore โดย Git ทั้งสองไฟล์มี private key ของ service account และค่า Discord แล้ว อย่าส่ง private key หรือ token ในแชตหรือ commit
 
@@ -53,9 +53,15 @@ GitHub Pages รองรับเฉพาะเว็บ static จึงร�
 
 เว็บจริงอยู่ที่ [totalwork-hh.sealseapep.workers.dev](https://totalwork-hh.sealseapep.workers.dev) และตรวจแล้วว่าหน้า login ตอบกลับได้ หน้าพื้นที่ทำงานส่งผู้ที่ยังไม่ล็อกอินไป `/login` ส่วน API แจ้งเตือนตอบ 401 การล็อกอิน Discord จริงต้องเพิ่ม redirect URI ข้างต้นใน Discord Developer Portal ก่อน
 
-`npm run dev:vinext` และ `npm run build:vinext` ใช้ vinext ตาม [คู่มือ Cloudflare สำหรับ Next.js](https://developers.cloudflare.com/workers/framework-guides/web-apps/nextjs/) แล้วใช้ `npm run deploy:wrangler` หลัง build เพื่อ deploy Worker จาก `wrangler.jsonc`
+`npm run dev:vinext` และ `npm run build:vinext` ใช้ vinext ตาม [คู่มือ Cloudflare สำหรับ Next.js](https://developers.cloudflare.com/workers/framework-guides/web-apps/nextjs/) การ deploy โค้ดทำผ่าน GitHub Actions ใน `.github/workflows/deploy-cloudflare.yml`
 
-ไฟล์ `.github/workflows/deploy-cloudflare.yml` เตรียม workflow แบบกดรันเองใน GitHub Actions หลังตั้งค่า `CLOUDFLARE_API_TOKEN` และ `CLOUDFLARE_ACCOUNT_ID` เป็น GitHub repository secrets โดย Worker secrets ถูกตั้งไว้ใน Cloudflare แล้ว workflow นี้ไม่เก็บค่าลับไว้ใน repository
+Workflow จะรันเมื่อ push เข้า `main` และกดรันเองได้ หลังตั้งค่าต่อไปนี้ใน GitHub repository:
+
+1. Actions secret `CLOUDFLARE_ACCOUNT_ID` ตั้งไว้แล้ว
+2. สร้าง Cloudflare API token สิทธิ์ **Edit Cloudflare Workers** ที่จำกัดเฉพาะบัญชีนี้ แล้วบันทึกเป็น Actions secret `CLOUDFLARE_API_TOKEN`
+3. ตั้ง Actions variable `CLOUDFLARE_DEPLOY_ENABLED` เป็น `true` เพื่อเปิด deploy อัตโนมัติ
+
+Worker secrets สำหรับ Discord และ Google Sheets เก็บใน Cloudflare อยู่แล้ว ไม่ต้องคัดลอกไป GitHub หลังตั้งค่าเสร็จ ให้กด **Actions → Deploy to Cloudflare Workers → Run workflow** หนึ่งครั้งเพื่อตรวจการ deploy แล้วการ push ครั้งถัดไปจะ deploy เอง
 
 Cloudflare config รุ่นที่ติดตั้งต้องใช้ Node.js **22.18 ขึ้นไป** เครื่องนี้มี Node 22.16 จึงใช้ Node 22.18 ชั่วคราวเพื่อตรวจ build ของ Worker แล้วผ่าน
 
