@@ -25,6 +25,20 @@ async function verify(token: string, secret: string): Promise<string | null> {
     return typeof session.id === "string" && /^\d{17,20}$/.test(session.id) && typeof session.exp === "number" && session.exp > Date.now() / 1000 ? session.id : null;
   } catch { return null; }
 }
+async function createOAuthState(secret: string) {
+  const payload = b64(encoder.encode(JSON.stringify({ nonce: crypto.randomUUID(), exp: Math.floor(Date.now() / 1000) + 600 })));
+  const signature = b64(new Uint8Array(await crypto.subtle.sign("HMAC", await signingKey(secret), encoder.encode(payload))));
+  return `${payload}.${signature}`;
+}
+async function validOAuthState(state: string, secret: string) {
+  const [payload, signature, extra] = state.split(".");
+  if (!payload || !signature || extra || !/^[A-Za-z0-9_-]+$/.test(payload + signature)) return false;
+  try {
+    if (!await crypto.subtle.verify("HMAC", await signingKey(secret), unb64(signature), encoder.encode(payload))) return false;
+    const value = JSON.parse(new TextDecoder().decode(unb64(payload))) as { nonce?: string; exp?: number };
+    return typeof value.nonce === "string" && typeof value.exp === "number" && value.exp > Date.now() / 1000;
+  } catch { return false; }
+}
 function cors(origin: string | null) {
   const headers = new Headers({ "Cache-Control": "no-store", "Vary": "Origin", "X-Content-Type-Options": "nosniff" });
   if (origin && ALLOWED_ORIGINS.has(origin)) {
@@ -47,15 +61,17 @@ async function handle(request: Request, env: Env): Promise<Response> {
   if (url.pathname === "/api/health" && request.method === "GET") return json({ ok: true, service: "totalwork-hh-api" });
   if (url.pathname === "/api/auth/discord" && request.method === "GET") {
     if (!env.AUTH_DISCORD_ID || !env.AUTH_DISCORD_SECRET) return error("Discord login unavailable", 503);
-    const state = crypto.randomUUID();
+    const state = await createOAuthState(env.AUTH_SECRET);
     const authorize = new URL("https://discord.com/oauth2/authorize");
-    authorize.search = new URLSearchParams({ client_id: env.AUTH_DISCORD_ID, response_type: "code", redirect_uri: `${url.origin}/api/auth/callback/discord`, scope: "identify", state }).toString();
-    return new Response(null, { status: 302, headers: { Location: authorize.toString(), "Set-Cookie": `hh_oauth_state=${state}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth; Max-Age=600` } });
+    authorize.search = new URLSearchParams({ client_id: env.AUTH_DISCORD_ID, response_type: "code", redirect_uri: SITE, scope: "identify", state }).toString();
+    return json({ authorizationUrl: authorize.toString(), state });
   }
-  if (url.pathname === "/api/auth/callback/discord" && request.method === "GET") {
-    const state = request.headers.get("cookie")?.match(/(?:^|;\s*)hh_oauth_state=([^;]+)/)?.[1];
-    if (!state || !url.searchParams.get("code") || url.searchParams.get("state") !== state) return error("Invalid login request", 400);
-    const tokenResponse = await fetch("https://discord.com/api/oauth2/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: env.AUTH_DISCORD_ID, client_secret: env.AUTH_DISCORD_SECRET, grant_type: "authorization_code", code: url.searchParams.get("code")!, redirect_uri: `${url.origin}/api/auth/callback/discord` }) });
+  if (url.pathname === "/api/auth/callback/discord" && request.method === "POST") {
+    const input = await body(request);
+    const state = typeof input?.state === "string" ? input.state : "";
+    const code = typeof input?.code === "string" ? input.code : "";
+    if (!code || code.length > 512 || !await validOAuthState(state, env.AUTH_SECRET)) return error("Invalid login request", 400);
+    const tokenResponse = await fetch("https://discord.com/api/oauth2/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ client_id: env.AUTH_DISCORD_ID, client_secret: env.AUTH_DISCORD_SECRET, grant_type: "authorization_code", code, redirect_uri: SITE }) });
     if (!tokenResponse.ok) return error("Discord authorization failed", 401);
     const discordToken = await tokenResponse.json() as { access_token: string };
     const profileResponse = await fetch("https://discord.com/api/users/@me", { headers: { authorization: `Bearer ${discordToken.access_token}` } });
@@ -63,7 +79,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const profile = await profileResponse.json() as { id: string };
     const member = (await db.members()).find((item) => item.discordUserId === profile.id && item.active);
     if (!member) return error("Discord account is not a member of this workspace", 403);
-    return new Response(null, { status: 302, headers: { Location: `${SITE}#auth=${await sign(member.discordUserId, env.AUTH_SECRET)}`, "Set-Cookie": "hh_oauth_state=; HttpOnly; Secure; SameSite=Lax; Path=/api/auth; Max-Age=0", "Referrer-Policy": "no-referrer", "Cache-Control": "no-store" } });
+    return json({ token: await sign(member.discordUserId, env.AUTH_SECRET) });
   }
   if (!url.pathname.startsWith("/api/")) return error("API only", 404);
   const auth = request.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];

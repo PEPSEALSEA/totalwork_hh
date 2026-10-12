@@ -28,14 +28,44 @@ export default function App() {
   const [message, setMessage] = useState("");
   const [formOpen, setFormOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [authPending, setAuthPending] = useState(false);
 
   useEffect(() => {
-    const match = location.hash.match(/^#auth=([A-Za-z0-9_.-]+)$/);
-    if (match) { setToken(match[1]); changeToken(match[1]); history.replaceState(null, "", `${location.pathname}${location.search}#/tasks`); setSection("tasks"); }
+    const params = new URLSearchParams(location.search);
+    const code = params.get("code");
+    const state = params.get("state");
+    const oauthError = params.get("error");
+    if (code || state || oauthError) {
+      history.replaceState(null, "", `${location.pathname}#/tasks`);
+      const expectedState = sessionStorage.getItem("hh_oauth_state");
+      sessionStorage.removeItem("hh_oauth_state");
+      if (oauthError) setError("Discord ไม่อนุญาตให้เข้าสู่ระบบ กรุณาลองอีกครั้ง");
+      else if (!code || !state || state !== expectedState) setError("การยืนยันตัวตนไม่ตรงกัน กรุณาเริ่มเข้าสู่ระบบใหม่");
+      else {
+        setAuthPending(true);
+        void fetch(`${API}/api/auth/callback/discord`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, state }) })
+          .then(async (response) => { const result = await response.json() as { token?: string; error?: string }; if (!response.ok || !result.token) throw new Error(result.error || "เข้าสู่ระบบไม่สำเร็จ"); return result.token; })
+          .then((newToken) => { setToken(newToken); changeToken(newToken); setSection("tasks"); setError(""); })
+          .catch((failure) => setError(failure instanceof Error ? failure.message : "เข้าสู่ระบบไม่สำเร็จ"))
+          .finally(() => setAuthPending(false));
+      }
+    }
     const onHash = () => setSection(currentSection());
     addEventListener("hashchange", onHash);
     return () => removeEventListener("hashchange", onHash);
   }, []);
+
+  async function startLogin() {
+    setAuthPending(true); setError("");
+    try {
+      const response = await fetch(`${API}/api/auth/discord`);
+      const result = await response.json() as { authorizationUrl?: string; state?: string; error?: string };
+      if (!response.ok || !result.authorizationUrl || !result.state) throw new Error(result.error || "เริ่มเข้าสู่ระบบไม่สำเร็จ");
+      sessionStorage.setItem("hh_oauth_state", result.state);
+      clearToken();
+      location.assign(result.authorizationUrl);
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "เริ่มเข้าสู่ระบบไม่สำเร็จ"); setAuthPending(false); }
+  }
 
   const reload = useCallback(async () => {
     if (!getToken()) return;
@@ -92,12 +122,12 @@ export default function App() {
   const name = (id: string) => members.find((member) => member.discordUserId === id)?.displayName || "ไม่ทราบชื่อ";
   const unread = notifications.filter((item) => !item.readAt).length;
 
-  if (!token) return <main className="login-wrap"><div className="panel login-card"><div className="brand-mark">H</div><h1>Totalwork HH</h1><p>พื้นที่ติดตามงานของทีม</p><small>สมาชิกที่ได้รับสิทธิ์เท่านั้นจึงจะดูข้อมูลงานได้</small><a className="discord-button" href={`${API}/api/auth/discord`}>เข้าสู่ระบบด้วย Discord</a></div></main>;
+  if (!token) return <main className="login-wrap"><div className="panel login-card"><div className="brand-mark">H</div><h1>Totalwork HH</h1><p>พื้นที่ติดตามงานของทีม</p><small>สมาชิกที่ได้รับสิทธิ์เท่านั้นจึงจะดูข้อมูลงานได้</small>{error && <div className="board-error" role="alert">{error}</div>}<button className="discord-button" disabled={authPending} onClick={() => void startLogin()}>{authPending ? "กำลังเข้าสู่ระบบ…" : "เข้าสู่ระบบด้วย Discord"}</button></div></main>;
   return <div className="app-shell">
     <aside className="sidebar"><div className="brand"><span className="brand-mark">H</span><div><strong>Totalwork</strong><small>HAMSTER HUB</small></div></div><div className="workspace-switch"><span className="workspace-avatar">HH</span><div><strong>Hamster Hub</strong><small>Team workspace</small></div></div><p className="nav-caption">WORKSPACE</p><nav className="nav-links" aria-label="เมนูหลัก">{navigation.map((item) => <a key={item.id} href={`#/${item.id}`} className={`nav-link ${section === item.id ? "active" : ""}`}><item.icon size={17}/>{item.name}{item.id === "notifications" && unread > 0 && <span className="nav-count">{unread}</span>}</a>)}</nav><div className="sidebar-bottom"><button className="nav-link logout-link" onClick={logout}><LogOut size={17}/>ออกจากระบบ</button><div className="sidebar-user"><span className="avatar lavender">{me?.displayName.slice(0, 1) || "H"}</span><div><strong>{me?.displayName || "กำลังโหลด"}</strong><small>{me?.teamRole || "สมาชิก"}</small></div></div></div></aside>
     <div className="main-area"><header className="topbar"><div className="mobile-brand"><span className="brand-mark">H</span><strong>Totalwork</strong></div><div className="breadcrumb">Workspace <span>/</span> <strong>{navigation.find((item) => item.id === section)?.name}</strong></div><div className="top-actions"><button className="icon-button" aria-label="โหลดข้อมูลใหม่" onClick={() => void reload()}>↻</button><a href="#/notifications" className="icon-button notification-bell" aria-label="การแจ้งเตือน"><Bell size={17}/>{unread > 0 && <span className="notification-count">{unread}</span>}</a><span className="avatar lavender top-avatar">{me?.displayName.slice(0, 1) || "H"}</span></div></header>
       <main className="content"><div className="page-heading"><div><p className="eyebrow">TEAM WORKSPACE</p><h1>{navigation.find((item) => item.id === section)?.name}</h1><p className="page-description">งานและความคืบหน้าของ Hamster Hub</p></div><span className="date-chip">{new Date().toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" })}</span></div>
-        {error && <div className="board-error" role="alert">{error}{!getToken() && <> · <a href={`${API}/api/auth/discord`}>เข้าสู่ระบบใหม่</a></>}</div>}
+        {error && <div className="board-error" role="alert">{error}</div>}
         {message && <div className="hint-panel" role="status">{message}</div>}
         {loading && !me ? <div className="panel loading-panel">กำลังโหลดข้อมูลทีม…</div> : me && <>
           {section === "home" && <><div className="welcome-banner"><div><p>ยินดีต้อนรับกลับ, {me.displayName}</p><h2>ทุกงานของทีม อยู่ในที่เดียว</h2><span>ติดตามความคืบหน้าและงานที่ต้องช่วยดู</span></div><div className="banner-orbit"><div className="orbit-one"/><div className="orbit-two"/><div className="orbit-core"><ClipboardList size={28}/></div></div></div><div className="stat-grid"><Stat label="งานทั้งหมด" value={tasks.length} icon={<ClipboardList size={18}/>} tone="violet"/><Stat label="งานของฉัน" value={tasks.filter((t) => t.assigneeDiscordId === me.discordUserId && t.status !== "เสร็จแล้ว").length} icon={<Home size={18}/>} tone="sky"/><Stat label="รอตรวจ" value={tasks.filter((t) => t.status === "รอตรวจ").length} icon={<ShieldCheck size={18}/>} tone="coral"/><Stat label="แจ้งเตือนใหม่" value={unread} icon={<Bell size={18}/>} tone="mint"/></div><div className="panel"><div className="panel-header"><div className="section-heading"><h2>งานล่าสุด</h2><span>ดูสถานะจาก Google Sheets</span></div><a className="text-link" href="#/tasks">ดูบอร์ดงาน <ChevronRight size={13}/></a></div><div className="task-list">{tasks.length === 0 ? <div className="empty-note">ยังไม่มีงาน</div> : tasks.slice(0, 6).map((task) => <div className="task-row" key={task.id}><span className="task-bullet"/><div className="task-main"><strong>{task.title}</strong><span>{name(task.assigneeDiscordId)}</span></div><span className="status next"><span/>{task.status}</span></div>)}</div></div></>}

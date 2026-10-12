@@ -17,7 +17,7 @@ npm ci
 npm run dev:pages
 ```
 
-The frontend runs at `http://localhost:5173/totalwork_hh/` and uses the deployed Worker API. To test a local API, run `npx wrangler dev --config wrangler.jsonc` with a local `.dev.vars`; adjust `web/api.ts` temporarily if needed. The local file is ignored by Git.
+The frontend runs at `http://localhost:5173/totalwork_hh/` and uses the deployed Worker API. The Discord OAuth redirect is the production Pages URL, so test the actual login on GitHub Pages. To test a local API, run `npx wrangler dev --config wrangler.jsonc` with a local `.dev.vars`; adjust `web/api.ts` temporarily if needed. The local file is ignored by Git.
 
 ```bash
 npm run typecheck:pages
@@ -30,11 +30,11 @@ The legacy Next.js source in `src/` is retained for reference; GitHub Pages buil
 
 ## Discord OAuth
 
-Register this exact redirect URI in the Discord Developer Portal:
+The Discord Developer Portal must contain this exact redirect URI (including the trailing slash):
 
-`https://totalwork-hh.sealseapep.workers.dev/api/auth/callback/discord`
+`https://pepsealsea.github.io/totalwork_hh/`
 
-The Worker completes OAuth and redirects to GitHub Pages with a short-lived signed token in the URL fragment. The frontend immediately removes that fragment from the address bar, stores the token in session storage, and sends it in an Authorization header to the Worker. Closing the tab ends the browser session. The Worker checks active membership on each request.
+The frontend requests a Discord authorization URL and a signed state value from the Worker, stores the state in session storage, and sends the browser to Discord. Discord returns a one-time code to GitHub Pages. The frontend compares the returned state with the stored value, removes the code from the address bar, and sends the code to the Worker. The Worker exchanges it using the client secret, checks membership, and returns a short-lived signed session token. Closing the tab ends the browser session. The Worker checks active membership on each API request.
 
 ## Configuration
 
