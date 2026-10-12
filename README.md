@@ -46,4 +46,4 @@ The API uses these tabs: `Members`, `Tasks`, `Notifications`, `Issues`, `Updates
 
 ## Design
 
-The dashboard layout was inspired by [shadcn/ui dashboard blocks](https://ui.shadcn.com/blocks), which are [MIT licensed](https://github.com/shadcn-ui/ui/blob/main/LICENSE.md). The application code and content are specific to Hamster Hub.
+The frontend uses a compact icon rail, line separated work lists, and popups for editing. The default theme is dark. The layout follows the visual reference supplied for this project; the code and content are specific to Hamster Hub.
