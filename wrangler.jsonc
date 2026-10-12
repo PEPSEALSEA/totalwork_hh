@@ -1,0 +1,22 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "totalwork-hh",
+  "main": ".cloudflare/output/v0/workers/default/bundle/index.js",
+  "compatibility_date": "2026-10-12",
+  "compatibility_flags": ["nodejs_compat"],
+  "secrets": {
+    "required": [
+      "AUTH_SECRET",
+      "AUTH_DISCORD_ID",
+      "AUTH_DISCORD_SECRET",
+      "GOOGLE_SHEET_ID",
+      "GOOGLE_SERVICE_ACCOUNT_EMAIL",
+      "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
+    ]
+  },
+  "assets": {
+    "directory": ".cloudflare/output/v0/workers/default/assets",
+    "binding": "ASSETS",
+    "not_found_handling": "none"
+  }
+}

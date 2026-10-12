@@ -1,0 +1,38 @@
+{
+  "name": "totalwork-hh",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "typecheck": "tsc --noEmit",
+    "dev:vinext": "vite dev --port 3001",
+    "build:vinext": "vite build",
+    "deploy:wrangler": "wrangler deploy --config wrangler.jsonc",
+    "start:vinext": "vite preview",
+    "deploy:vinext": "vinext-cloudflare deploy"
+  },
+  "dependencies": {
+    "lucide-react": "^0.468.0",
+    "next": "^16.4.0",
+    "react": "latest",
+    "react-dom": "latest",
+    "react-server-dom-webpack": "latest",
+    "@vinext/cloudflare": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.0.0",
+    "vinext": "^1.1.0",
+    "vite": "8.3.0",
+    "wrangler": "^4.0.0",
+    "@vitejs/plugin-react": "latest",
+    "@vitejs/plugin-rsc": "latest",
+    "@cloudflare/vite-plugin": "beta",
+    "cf": "latest"
+  },
+  "type": "module"
+}
