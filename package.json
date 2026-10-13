@@ -17,25 +17,28 @@
     "start:vinext": "vite preview"
   },
   "dependencies": {
+    "@vinext/cloudflare": "latest",
     "lucide-react": "^0.468.0",
     "next": "^16.4.0",
     "react": "latest",
     "react-dom": "latest",
+    "react-markdown": "^10.1.0",
     "react-server-dom-webpack": "latest",
-    "@vinext/cloudflare": "latest"
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
+    "@cloudflare/vite-plugin": "beta",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "latest",
+    "@vitejs/plugin-rsc": "latest",
+    "cf": "latest",
     "typescript": "^5.0.0",
     "vinext": "^1.1.0",
     "vite": "8.3.0",
-    "wrangler": "^4.0.0",
-    "@vitejs/plugin-react": "latest",
-    "@vitejs/plugin-rsc": "latest",
-    "@cloudflare/vite-plugin": "beta",
-    "cf": "latest"
+    "wrangler": "^4.0.0"
   },
   "type": "module"
 }
