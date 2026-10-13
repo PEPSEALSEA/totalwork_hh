@@ -79,7 +79,7 @@ function cors(origin: string | null) {
   if (origin && ALLOWED_ORIGINS.has(origin)) {
     headers.set("Access-Control-Allow-Origin", origin);
     headers.set("Access-Control-Allow-Headers", "Authorization, Content-Type");
-    headers.set("Access-Control-Allow-Methods", "GET, POST, PATCH, OPTIONS");
+    headers.set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS");
   }
   return headers;
 }
@@ -139,6 +139,24 @@ async function handle(request: Request, env: Env): Promise<Response> {
     if (ownerDiscordId && !(await db.members()).some((item) => item.discordUserId === ownerDiscordId && item.active)) return error("Owner not found", 400);
     return json(await db.createIssue({ title, description, reporterDiscordId: member.discordUserId, ownerDiscordId, priority }), 201);
   }
+  const issueMatch = url.pathname.match(/^\/api\/issues\/([^/]+)$/);
+  if (issueMatch && request.method === "DELETE") {
+    const issue = (await db.issues()).find((item) => item.id === decodeURIComponent(issueMatch[1]));
+    if (!issue) return error("Issue not found", 404);
+    if (issue.reporterDiscordId !== id) return error("Forbidden", 403);
+    await db.deleteIssue(issue.row);
+    return json({ ok: true });
+  }
+  const issueStatusMatch = url.pathname.match(/^\/api\/issues\/([^/]+)\/status$/);
+  if (issueStatusMatch && request.method === "PATCH") {
+    const issue = (await db.issues()).find((item) => item.id === decodeURIComponent(issueStatusMatch[1]));
+    if (!issue) return error("Issue not found", 404);
+    if (member.role === "viewer" || (member.role !== "admin" && member.role !== "lead" && issue.reporterDiscordId !== id && issue.ownerDiscordId !== id)) return error("Forbidden", 403);
+    const input = await body(request);
+    if (input?.status !== "เปิด" && input?.status !== "แก้แล้ว") return error("Invalid status", 400);
+    await db.updateIssueStatus(issue.row, input.status);
+    return json({ ok: true });
+  }
   if (url.pathname === "/api/updates" && request.method === "GET") return json({ updates: await db.updates() });
   if (url.pathname === "/api/updates" && request.method === "POST") {
     if (member.role === "viewer") return error("Forbidden", 403);
@@ -150,9 +168,17 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return json(await db.createUpdate({ authorDiscordId: member.discordUserId, today, blockers, tomorrow }), 201);
   }
   if (url.pathname === "/api/announcements" && request.method === "GET") return json({ announcements: await db.announcements() });
+  if (url.pathname === "/api/announcements" && request.method === "POST") {
+    if (id === PREVIEW_MEMBER_ID || member.role === "viewer") return error("Forbidden", 403);
+    const input = await body(request);
+    const title = typeof input?.title === "string" ? input.title.trim() : "";
+    const text = typeof input?.body === "string" ? input.body.trim() : "";
+    if (!title || title.length > 160 || !text || text.length > 2000) return error("Invalid announcement fields", 400);
+    return json(await db.createAnnouncement({ title, body: text, authorDiscordId: id }), 201);
+  }
   if (url.pathname === "/api/tasks" && request.method === "GET") return json({ tasks: await db.tasks() });
   if (url.pathname === "/api/tasks" && request.method === "POST") {
-    if (member.role !== "admin" && member.role !== "lead") return error("Forbidden", 403);
+    if (id === PREVIEW_MEMBER_ID || member.role === "viewer") return error("Forbidden", 403);
     const input = await body(request);
     const title = typeof input?.title === "string" ? input.title.trim() : "";
     const description = typeof input?.description === "string" ? input.description.trim() : "";
@@ -161,6 +187,14 @@ async function handle(request: Request, env: Env): Promise<Response> {
     if (!title || title.length > 160 || description.length > 2000 || (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) return error("Invalid task fields", 400);
     if (!(await db.members()).some((item) => item.discordUserId === assigneeDiscordId && item.active)) return error("Assignee not found", 400);
     return json(await db.createTask({ title, description, assigneeDiscordId, dueDate, reviewRequested: input?.reviewRequested === true, creator: member }), 201);
+  }
+  const taskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
+  if (taskMatch && request.method === "DELETE") {
+    const task = (await db.tasks()).find((item) => item.id === decodeURIComponent(taskMatch[1]));
+    if (!task) return error("Task not found", 404);
+    if (task.createdByDiscordId !== id) return error("Forbidden", 403);
+    await db.deleteTask(task);
+    return json({ ok: true });
   }
   const statusMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)\/status$/);
   if (statusMatch && request.method === "PATCH") {

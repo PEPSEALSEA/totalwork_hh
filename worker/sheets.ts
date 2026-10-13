@@ -11,7 +11,7 @@ export interface Env {
 export type Member = { discordUserId: string; displayName: string; role: "admin" | "lead" | "member" | "viewer"; active: boolean; teamRole: string; discordName?: string; discordUsername?: string; avatarUrl?: string };
 export type Task = { id: string; title: string; description: string; assigneeDiscordId: string; status: string; dueDate: string; updatedAt: string; reviewRequested: boolean; createdByDiscordId: string; createdAt: string; row: number };
 export type Notification = { id: string; recipientDiscordId: string; taskId: string; type: string; title: string; body: string; createdAt: string; readAt: string; row: number };
-export type Issue = { id: string; title: string; description: string; reporterDiscordId: string; ownerDiscordId: string; priority: string; status: string; createdAt: string };
+export type Issue = { id: string; title: string; description: string; reporterDiscordId: string; ownerDiscordId: string; priority: string; status: string; createdAt: string; row: number };
 export type Update = { id: string; authorDiscordId: string; workDate: string; today: string; blockers: string; tomorrow: string; createdAt: string };
 export type Announcement = { id: string; title: string; body: string; authorDiscordId: string; publishedAt: string; audience: string };
 
@@ -19,11 +19,19 @@ const bytes = (value: string) => new TextEncoder().encode(value);
 const b64 = (value: Uint8Array) => btoa(String.fromCharCode(...value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 const encode = (value: unknown) => b64(bytes(JSON.stringify(value)));
 let cached: { key: string; value: string; expires: number } | undefined;
+let pendingToken: { key: string; promise: Promise<string> } | undefined;
 
 export function sheets(env: Env) {
   async function accessToken() {
     const cacheKey = `${env.GOOGLE_SERVICE_ACCOUNT_EMAIL}:${env.GOOGLE_SHEET_ID}`;
     if (cached?.key === cacheKey && cached.expires > Date.now() + 60_000) return cached.value;
+    if (pendingToken?.key === cacheKey) return pendingToken.promise;
+    const promise = requestAccessToken(cacheKey);
+    pendingToken = { key: cacheKey, promise };
+    try { return await promise; }
+    finally { if (pendingToken?.promise === promise) pendingToken = undefined; }
+  }
+  async function requestAccessToken(cacheKey: string) {
     const pem = env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replaceAll("\\n", "\n");
     if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !pem) throw new Error("Google credentials missing");
     const der = Uint8Array.from(atob(pem.replace(/-----[^-]+-----|\s/g, "")), (char) => char.charCodeAt(0));
@@ -56,7 +64,7 @@ export function sheets(env: Env) {
     return (await rows("Notifications")).slice(1).map((r, i) => ({ id: r[0] || "", recipientDiscordId: r[1] || "", taskId: r[2] || "", type: r[3] || "", title: r[4] || "", body: r[5] || "", createdAt: r[6] || "", readAt: r[7] || "", row: i + 2 })).filter((n) => n.id && n.recipientDiscordId === discordId).reverse();
   }
   async function issues(): Promise<Issue[]> {
-    return (await rows("Issues")).slice(1).filter((r) => r[0]).map((r) => ({ id: r[0], title: r[1] || "ไม่มีชื่อ", description: r[2] || "", reporterDiscordId: r[3] || "", ownerDiscordId: r[4] || "", priority: r[5] || "ปกติ", status: r[6] || "เปิด", createdAt: r[7] || "" })).reverse();
+    return (await rows("Issues")).slice(1).map((r, i) => ({ id: r[0] || "", title: r[1] || "ไม่มีชื่อ", description: r[2] || "", reporterDiscordId: r[3] || "", ownerDiscordId: r[4] || "", priority: r[5] || "ปกติ", status: r[6] || "เปิด", createdAt: r[7] || "", row: i + 2 })).filter((issue) => issue.id).reverse();
   }
   async function updates(): Promise<Update[]> {
     return (await rows("Updates")).slice(1).filter((r) => r[0]).map((r) => ({ id: r[0], authorDiscordId: r[1] || "", workDate: r[2] || "", today: r[3] || "", blockers: r[4] || "", tomorrow: r[5] || "", createdAt: r[6] || "" })).reverse();
@@ -76,6 +84,21 @@ export function sheets(env: Env) {
     await call(`/values/${encodeURIComponent("'Issues'!A:I")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[id, input.title, input.description, input.reporterDiscordId, input.ownerDiscordId, input.priority, "เปิด", now, now]] }) });
     return { id };
   }
+  async function createAnnouncement(input: { title: string; body: string; authorDiscordId: string }) {
+    const id = `NEWS-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
+    await call(`/values/${encodeURIComponent("'Announcements'!A:F")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[id, input.title, input.body, input.authorDiscordId, new Date().toISOString(), "all"]] }) });
+    return { id };
+  }
+  async function updateIssueStatus(row: number, status: string) {
+    await call("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: [{ range: `'Issues'!G${row}`, values: [[status]] }, { range: `'Issues'!I${row}`, values: [[new Date().toISOString()]] }] }) });
+  }
+  async function deleteIssue(row: number) {
+    await call("/values:batchClear", { method: "POST", body: JSON.stringify({ ranges: [`'Issues'!A${row}:I${row}`] }) });
+  }
+  async function deleteTask(task: Task) {
+    const related = (await rows("Notifications")).slice(1).flatMap((row, i) => row[2] === task.id ? [`'Notifications'!A${i + 2}:H${i + 2}`] : []);
+    await call("/values:batchClear", { method: "POST", body: JSON.stringify({ ranges: [`'Tasks'!A${task.row}:J${task.row}`, ...related] }) });
+  }
   async function createTask(input: { title: string; description: string; assigneeDiscordId: string; dueDate: string; reviewRequested: boolean; creator: Member }) {
     const id = `TASK-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const now = new Date().toISOString();
@@ -94,5 +117,5 @@ export function sheets(env: Env) {
     const range = `'Notifications'!H${row}`;
     await call(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ range, values: [[new Date().toISOString()]] }) });
   }
-  return { members, tasks, notifications, issues, updates, announcements, createTask, createUpdate, createIssue, updateTaskStatus, markNotificationRead };
+  return { members, tasks, notifications, issues, updates, announcements, createTask, createUpdate, createIssue, createAnnouncement, updateIssueStatus, deleteIssue, deleteTask, updateTaskStatus, markNotificationRead };
 }
