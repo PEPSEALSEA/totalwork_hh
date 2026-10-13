@@ -8,7 +8,7 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (!token) throw new Error("กรุณาเข้าสู่ระบบ");
   const response = await fetch(`${API}${path}`, { ...options, headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json", ...options.headers } });
   if (!response.ok) {
-    if (response.status === 401 || response.status === 403) clearToken();
+    if (response.status === 401) clearToken();
     let detail = "";
     try { detail = (await response.json() as { error?: string }).error || ""; } catch { /* no body */ }
     throw new Error(detail || `API error ${response.status}`);

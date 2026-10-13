@@ -123,13 +123,18 @@ export default function App() {
     if (!getToken()) return;
     setLoading(true); setError("");
     try {
-      const [identity, team, work, notices, problems, reports, news, comments] = await Promise.allSettled([
-        api<{ member: Member }>("/api/me"), api<{ members: Member[] }>("/api/team"), api<{ tasks: Task[] }>("/api/tasks"),
-        api<{ notifications: Notice[] }>("/api/notifications"), api<{ issues: Issue[] }>("/api/issues"),
-        api<{ updates: Update[] }>("/api/updates"), api<{ announcements: Announcement[] }>("/api/announcements"),
-        api<{ comments: AnnouncementComment[] }>("/api/announcement-comments"),
+      const identity = await api<{ member: Member }>("/api/me", { signal: AbortSignal.timeout(20_000) });
+      setMe(identity.member);
+      setLoading(false);
+      const [team, work, notices, problems, reports, news, comments] = await Promise.allSettled([
+        api<{ members: Member[] }>("/api/team", { signal: AbortSignal.timeout(20_000) }),
+        api<{ tasks: Task[] }>("/api/tasks", { signal: AbortSignal.timeout(20_000) }),
+        api<{ notifications: Notice[] }>("/api/notifications", { signal: AbortSignal.timeout(20_000) }),
+        api<{ issues: Issue[] }>("/api/issues", { signal: AbortSignal.timeout(20_000) }),
+        api<{ updates: Update[] }>("/api/updates", { signal: AbortSignal.timeout(20_000) }),
+        api<{ announcements: Announcement[] }>("/api/announcements", { signal: AbortSignal.timeout(20_000) }),
+        api<{ comments: AnnouncementComment[] }>("/api/announcement-comments", { signal: AbortSignal.timeout(20_000) }),
       ]);
-      if (identity.status === "fulfilled") setMe(identity.value.member);
       if (team.status === "fulfilled") setMembers(team.value.members);
       if (work.status === "fulfilled") setTasks(work.value.tasks);
       if (notices.status === "fulfilled") setNotifications(notices.value.notifications);
@@ -137,9 +142,9 @@ export default function App() {
       if (reports.status === "fulfilled") setUpdates(reports.value.updates);
       if (news.status === "fulfilled") setAnnouncements(news.value.announcements);
       if (comments.status === "fulfilled") setAnnouncementComments(comments.value.comments);
-      if ([identity, team, work, notices, problems, reports, news, comments].some((result) => result.status === "rejected")) setError("โหลดข้อมูลบางส่วนไม่สำเร็จ กดโหลดใหม่อีกครั้ง");
+      if ([team, work, notices, problems, reports, news, comments].some((result) => result.status === "rejected")) setError("โหลดข้อมูลบางส่วนไม่สำเร็จ กดโหลดใหม่อีกครั้ง");
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : "โหลดข้อมูลไม่สำเร็จ");
+      setError(failure instanceof Error ? `โหลดข้อมูลผู้ใช้ไม่สำเร็จ: ${failure.message}` : "โหลดข้อมูลผู้ใช้ไม่สำเร็จ");
       if (!getToken()) { changeToken(null); setMe(null); }
     } finally { setLoading(false); }
   }, []);
@@ -267,7 +272,7 @@ export default function App() {
       <main className="workspace-content"><div className="page-intro"><div><h1>{headings[section].title}</h1><p>{headings[section].caption}</p></div><span className="page-date">{new Date().toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" })}</span></div>
         {error && !modal && <div className="toast toast-error" role="alert">{error}<button onClick={() => setError("")} aria-label="ปิดข้อความ"><X size={14}/></button></div>}
         {message && <div className="toast toast-success" role="status">{message}<button onClick={() => setMessage("")} aria-label="ปิดข้อความ"><X size={14}/></button></div>}
-        {loading && !me ? <p className="loading-text">กำลังโหลดข้อมูลงาน…</p> : me && <>
+        {!me ? <div className="loading-text">{loading ? "กำลังโหลดข้อมูลงาน…" : <button type="button" className="text-add" onClick={() => void reload()}>โหลดข้อมูลใหม่</button>}</div> : <>
           {section === "home" && <><div className="overview-line"><strong>สวัสดี, {me.displayName}</strong><span>งานของทีมวันนี้</span></div><div className="overview-stats"><div><strong>{tasks.filter((task) => task.assigneeDiscordId === me.discordUserId && task.status !== "เสร็จแล้ว").length}</strong><span>งานของฉัน</span></div><div><strong>{tasks.filter((task) => task.status === "กำลังทำ").length}</strong><span>กำลังทำ</span></div><div><strong>{tasks.filter((task) => task.status === "รอตรวจ").length}</strong><span>รอตรวจ</span></div><div><strong>{unread}</strong><span>แจ้งเตือนใหม่</span></div></div><SectionTitle title="งานล่าสุด" action={<a href="#/tasks">ดูทั้งหมด <ChevronRight size={15}/></a>}/><TaskTable tasks={tasks.slice(0, 7)} name={name} avatar={avatar} canMove={canMove} busy={busy} onDetail={openDetail} onMove={moveTask}/><div className="home-bottom"><div><SectionTitle title="ปัญหาที่เปิดอยู่" action={<a href="#/issues">ดูทั้งหมด <ChevronRight size={15}/></a>}/>{openIssues.length === 0 ? <EmptyText>ไม่มีปัญหาที่เปิดอยู่</EmptyText> : openIssues.slice(0, 3).map((issue) => <div className="short-row" key={issue.id}><span>{issue.title}</span><small>{issue.priority}</small></div>)}</div><div><SectionTitle title="อัปเดตล่าสุด" action={<a href="#/updates">ดูทั้งหมด <ChevronRight size={15}/></a>}/>{updates.length === 0 ? <EmptyText>ยังไม่มีอัปเดตจากทีม</EmptyText> : updates.slice(0, 3).map((item) => <div className="short-row" key={item.id}><span>{name(item.authorDiscordId)}: {item.today}</span><small>{displayDate(item.workDate)}</small></div>)}</div></div></>}
           {section === "tasks" && <><div className="list-toolbar"><div className="view-switch"><button className={taskView === "list" ? "active" : ""} onClick={() => setTaskView("list")} aria-pressed={taskView === "list"}><List size={16}/> รายการ</button><button className={taskView === "board" ? "active" : ""} onClick={() => setTaskView("board")} aria-pressed={taskView === "board"}><Columns3 size={16}/> บอร์ด</button></div><div className="toolbar-end"><span>{tasks.length} งาน</span>{canAssign && <button className="text-add" onClick={() => { setError(""); setModal("task"); }}><Plus size={17}/> มอบหมายงาน</button>}</div></div>{taskView === "list" ? <TaskTable tasks={tasks} name={name} avatar={avatar} canMove={canMove} busy={busy} onDetail={openDetail} onMove={moveTask}/> : <div className="simple-board">{stages.map((stage) => <section key={stage} className="board-lane"><header><span className={`stage-dot ${stageClass(stage)}`}/><h2>{stage}</h2><small>{tasks.filter((task) => task.status === stage).length}</small></header>{tasks.filter((task) => task.status === stage).length === 0 ? <p className="lane-empty">ยังไม่มีงาน</p> : tasks.filter((task) => task.status === stage).map((task) => <button key={task.id} className="lane-task" onClick={() => openDetail(task)}><strong>{task.title}</strong><span>{name(task.assigneeDiscordId)}</span></button>)}</section>)}</div>}</>}
           {section === "issues" && <><div className="list-toolbar"><span>{issues.filter((issue) => issue.status !== "แก้แล้ว").length} ยังเปิดอยู่ · {issues.length} ทั้งหมด</span>{canWrite && <button className="text-add" onClick={() => { setError(""); setModal("issue"); }}><Plus size={17}/> รายงานปัญหา</button>}</div><div className="table-head issue-columns"><span>ปัญหา</span><span>ผู้ดูแล</span><span>ความสำคัญ</span><span>สถานะ</span></div>{issues.length === 0 ? <EmptyText>ยังไม่มีปัญหา กด “รายงานปัญหา” เมื่อมีเรื่องที่ทีมต้องช่วยกันแก้</EmptyText> : issues.map((issue) => <button type="button" className="table-row issue-columns issue-row" key={issue.id} onClick={() => { setDetailIssue(issue); setModal("issue-detail"); }}><span className="cell-main"><strong>{issue.title}</strong><small>{issue.description || "กดเพื่อดูรายละเอียด"}</small></span><span>{issue.ownerDiscordId ? name(issue.ownerDiscordId) : "ยังไม่กำหนด"}</span><span>{issue.priority}</span><span className={issue.status === "แก้แล้ว" ? "issue-resolved" : "issue-open"}>{issue.status}</span></button>)}</>}
