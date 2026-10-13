@@ -42,7 +42,7 @@ Set the following Cloudflare Worker secrets (they have already been uploaded to 
 
 ## Sheets
 
-The API uses these tabs: `Members`, `Tasks`, `Notifications`, `Issues`, `Updates`, and `Announcements`. The frontend supports task assignment, Kanban status changes, notifications, issue reporting, and daily updates. Admins and leads may assign tasks; members may update their own tasks; viewers may only read. Membership and roles come from `Members`.
+The API uses these tabs: `Members`, `Tasks`, `Notifications`, `Issues`, `Updates`, `Announcements`, and `AnnouncementComments`. The Worker creates `AnnouncementComments` when it is first needed. New announcements can include a meeting topic, a Markdown summary, and an optional raw `.txt` transcript. Raw text is stored in chunks in columns I:Z of `Announcements` and fetched only when a member downloads it. Announcement authors can edit their posts and attach a transcript later. Signed-in members can comment, and comment authors or admins can delete comments; viewers may only read. Membership and roles come from `Members`.
 
 ## Design
 

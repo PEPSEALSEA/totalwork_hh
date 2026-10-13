@@ -168,20 +168,65 @@ async function handle(request: Request, env: Env): Promise<Response> {
     return json(await db.createUpdate({ authorDiscordId: member.discordUserId, today, blockers, tomorrow }), 201);
   }
   if (url.pathname === "/api/announcements" && request.method === "GET") return json({ announcements: await db.announcements() });
+  if (url.pathname === "/api/announcement-comments" && request.method === "GET") {
+    const announcementIds = new Set((await db.announcements()).map((item) => item.id));
+    return json({ comments: (await db.announcementComments()).filter((item) => announcementIds.has(item.announcementId)).map(({ row, ...comment }) => comment) });
+  }
   if (url.pathname === "/api/announcements" && request.method === "POST") {
     if (id === PREVIEW_MEMBER_ID || member.role === "viewer") return error("Forbidden", 403);
     const input = await body(request);
     const title = typeof input?.title === "string" ? input.title.trim() : "";
     const text = typeof input?.body === "string" ? input.body.trim() : "";
-    if (!title || title.length > 160 || !text || text.length > 2000) return error("Invalid announcement fields", 400);
-    return json(await db.createAnnouncement({ title, body: text, authorDiscordId: id }), 201);
+    const meetingTopic = typeof input?.meetingTopic === "string" ? input.meetingTopic.trim() : "";
+    const rawText = typeof input?.rawText === "string" ? input.rawText : "";
+    if (!title || title.length > 160 || !text || text.length > 2000 || meetingTopic.length > 160 || rawText.length > 500_000) return error("Invalid announcement fields", 400);
+    return json(await db.createAnnouncement({ title, body: text, authorDiscordId: id, meetingTopic, rawText }), 201);
+  }
+  const announcementCommentsMatch = url.pathname.match(/^\/api\/announcements\/([^/]+)\/comments$/);
+  if (announcementCommentsMatch && request.method === "POST") {
+    if (id === PREVIEW_MEMBER_ID || member.role === "viewer") return error("Forbidden", 403);
+    const announcementId = decodeURIComponent(announcementCommentsMatch[1]);
+    if (!(await db.announcements()).some((item) => item.id === announcementId)) return error("Announcement not found", 404);
+    const input = await body(request);
+    const text = typeof input?.body === "string" ? input.body.trim() : "";
+    if (!text || text.length > 2000) return error("Invalid comment", 400);
+    const { row, ...comment } = await db.createAnnouncementComment({ announcementId, authorDiscordId: id, authorName: member.displayName, body: text });
+    return json({ comment }, 201);
+  }
+  const announcementCommentMatch = url.pathname.match(/^\/api\/announcements\/([^/]+)\/comments\/([^/]+)$/);
+  if (announcementCommentMatch && request.method === "DELETE") {
+    const announcementId = decodeURIComponent(announcementCommentMatch[1]);
+    const commentId = decodeURIComponent(announcementCommentMatch[2]);
+    const comment = (await db.announcementComments()).find((item) => item.id === commentId && item.announcementId === announcementId);
+    if (!comment) return error("Comment not found", 404);
+    if (comment.authorDiscordId !== id && member.role !== "admin") return error("Forbidden", 403);
+    await db.deleteAnnouncementComment(comment.row);
+    return json({ ok: true });
+  }
+  const announcementRawMatch = url.pathname.match(/^\/api\/announcements\/([^/]+)\/raw$/);
+  if (announcementRawMatch && request.method === "GET") {
+    const announcement = (await db.announcements()).find((item) => item.id === decodeURIComponent(announcementRawMatch[1]));
+    if (!announcement || !announcement.hasRawText) return error("Raw text not found", 404);
+    return json({ rawText: await db.announcementRawText(announcement.row) });
   }
   const announcementMatch = url.pathname.match(/^\/api\/announcements\/([^/]+)$/);
+  if (announcementMatch && request.method === "PATCH") {
+    const announcement = (await db.announcements()).find((item) => item.id === decodeURIComponent(announcementMatch[1]));
+    if (!announcement) return error("Announcement not found", 404);
+    if (announcement.authorDiscordId !== id) return error("Forbidden", 403);
+    const input = await body(request);
+    const title = typeof input?.title === "string" ? input.title.trim() : "";
+    const text = typeof input?.body === "string" ? input.body.trim() : "";
+    const meetingTopic = typeof input?.meetingTopic === "string" ? input.meetingTopic.trim() : "";
+    if (!title || title.length > 160 || !text || text.length > 2000 || meetingTopic.length > 160 || (input?.rawText !== undefined && (typeof input.rawText !== "string" || input.rawText.length > 500_000))) return error("Invalid announcement fields", 400);
+    await db.updateAnnouncement(announcement, { title, body: text, meetingTopic, rawText: input?.rawText as string | undefined });
+    return json({ ok: true });
+  }
   if (announcementMatch && request.method === "DELETE") {
     const announcement = (await db.announcements()).find((item) => item.id === decodeURIComponent(announcementMatch[1]));
     if (!announcement) return error("Announcement not found", 404);
     if (announcement.authorDiscordId !== id) return error("Forbidden", 403);
-    await db.deleteAnnouncement(announcement.row);
+    await db.deleteAnnouncement(announcement);
     return json({ ok: true });
   }
   if (url.pathname === "/api/tasks" && request.method === "GET") return json({ tasks: await db.tasks() });
