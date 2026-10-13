@@ -176,6 +176,14 @@ async function handle(request: Request, env: Env): Promise<Response> {
     if (!title || title.length > 160 || !text || text.length > 2000) return error("Invalid announcement fields", 400);
     return json(await db.createAnnouncement({ title, body: text, authorDiscordId: id }), 201);
   }
+  const announcementMatch = url.pathname.match(/^\/api\/announcements\/([^/]+)$/);
+  if (announcementMatch && request.method === "DELETE") {
+    const announcement = (await db.announcements()).find((item) => item.id === decodeURIComponent(announcementMatch[1]));
+    if (!announcement) return error("Announcement not found", 404);
+    if (announcement.authorDiscordId !== id) return error("Forbidden", 403);
+    await db.deleteAnnouncement(announcement.row);
+    return json({ ok: true });
+  }
   if (url.pathname === "/api/tasks" && request.method === "GET") return json({ tasks: await db.tasks() });
   if (url.pathname === "/api/tasks" && request.method === "POST") {
     if (id === PREVIEW_MEMBER_ID || member.role === "viewer") return error("Forbidden", 403);

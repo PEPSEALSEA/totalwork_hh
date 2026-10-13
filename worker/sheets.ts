@@ -13,7 +13,7 @@ export type Task = { id: string; title: string; description: string; assigneeDis
 export type Notification = { id: string; recipientDiscordId: string; taskId: string; type: string; title: string; body: string; createdAt: string; readAt: string; row: number };
 export type Issue = { id: string; title: string; description: string; reporterDiscordId: string; ownerDiscordId: string; priority: string; status: string; createdAt: string; row: number };
 export type Update = { id: string; authorDiscordId: string; workDate: string; today: string; blockers: string; tomorrow: string; createdAt: string };
-export type Announcement = { id: string; title: string; body: string; authorDiscordId: string; publishedAt: string; audience: string };
+export type Announcement = { id: string; title: string; body: string; authorDiscordId: string; publishedAt: string; audience: string; row: number };
 
 const bytes = (value: string) => new TextEncoder().encode(value);
 const b64 = (value: Uint8Array) => btoa(String.fromCharCode(...value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
@@ -70,7 +70,7 @@ export function sheets(env: Env) {
     return (await rows("Updates")).slice(1).filter((r) => r[0]).map((r) => ({ id: r[0], authorDiscordId: r[1] || "", workDate: r[2] || "", today: r[3] || "", blockers: r[4] || "", tomorrow: r[5] || "", createdAt: r[6] || "" })).reverse();
   }
   async function announcements(): Promise<Announcement[]> {
-    return (await rows("Announcements")).slice(1).filter((r) => r[0]).map((r) => ({ id: r[0], title: r[1] || "", body: r[2] || "", authorDiscordId: r[3] || "", publishedAt: r[4] || "", audience: r[5] || "all" })).reverse();
+    return (await rows("Announcements")).slice(1).map((r, i) => ({ id: r[0] || "", title: r[1] || "", body: r[2] || "", authorDiscordId: r[3] || "", publishedAt: r[4] || "", audience: r[5] || "all", row: i + 2 })).filter((item) => item.id).reverse();
   }
   async function createUpdate(input: { authorDiscordId: string; today: string; blockers: string; tomorrow: string }) {
     const id = `UPDATE-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
@@ -95,6 +95,9 @@ export function sheets(env: Env) {
   async function deleteIssue(row: number) {
     await call("/values:batchClear", { method: "POST", body: JSON.stringify({ ranges: [`'Issues'!A${row}:I${row}`] }) });
   }
+  async function deleteAnnouncement(row: number) {
+    await call("/values:batchClear", { method: "POST", body: JSON.stringify({ ranges: [`'Announcements'!A${row}:F${row}`] }) });
+  }
   async function deleteTask(task: Task) {
     const related = (await rows("Notifications")).slice(1).flatMap((row, i) => row[2] === task.id ? [`'Notifications'!A${i + 2}:H${i + 2}`] : []);
     await call("/values:batchClear", { method: "POST", body: JSON.stringify({ ranges: [`'Tasks'!A${task.row}:J${task.row}`, ...related] }) });
@@ -117,5 +120,5 @@ export function sheets(env: Env) {
     const range = `'Notifications'!H${row}`;
     await call(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ range, values: [[new Date().toISOString()]] }) });
   }
-  return { members, tasks, notifications, issues, updates, announcements, createTask, createUpdate, createIssue, createAnnouncement, updateIssueStatus, deleteIssue, deleteTask, updateTaskStatus, markNotificationRead };
+  return { members, tasks, notifications, issues, updates, announcements, createTask, createUpdate, createIssue, createAnnouncement, updateIssueStatus, deleteIssue, deleteAnnouncement, deleteTask, updateTaskStatus, markNotificationRead };
 }
