@@ -69,7 +69,7 @@ export default function App() {
   const [detailIssue, setDetailIssue] = useState<Issue | null>(null);
   const [noticesOpen, setNoticesOpen] = useState(false);
   const noticesRef = useRef<HTMLDivElement>(null);
-  const [taskView, setTaskView] = useState<"list" | "board">("list");
+  const [taskView, setTaskView] = useState<"list" | "board">("board");
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
