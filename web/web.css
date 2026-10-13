@@ -126,3 +126,8 @@ button:focus-visible,a:focus-visible,summary:focus-visible,input:focus-visible,t
 .field-note{font-size:10px;font-weight:400;color:var(--quiet)}
 .dialog-form input[type=file]::file-selector-button{background:#314238;color:var(--ink);border:0;border-radius:3px;padding:5px 8px;margin-right:10px}
 @media(max-width:480px){.comment-form{display:grid}.comment-form button{justify-self:end}}
+.announcement-note{margin-top:15px;border-left:2px solid var(--accent);padding:8px 12px;background:#202720}
+.announcement-note>strong{font-size:11px;color:var(--accent)}
+.announcement-note .markdown-text{font-size:11px;margin-top:4px}
+.news-load-error{font-size:11px;color:var(--muted);padding:14px 0;margin:0}
+.news-load-error button{border:0;background:none;color:var(--accent);text-decoration:underline;cursor:pointer}

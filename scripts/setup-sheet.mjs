@@ -22,7 +22,7 @@ const columns = {
   Tasks: ["id", "title", "description", "assignee_discord_id", "status", "due_date", "updated_at", "review_requested", "created_by_discord_id", "created_at"],
   Issues: ["id", "title", "description", "reporter_discord_id", "owner_discord_id", "priority", "status", "created_at", "updated_at"],
   Updates: ["id", "author_discord_id", "work_date", "today", "blockers", "tomorrow", "created_at"],
-  Announcements: ["id", "title", "body", "author_discord_id", "published_at", "audience", "meeting_topic", "has_raw_text", ...Array.from({ length: 18 }, (_, i) => `raw_text_${i + 1}`)],
+  Announcements: ["id", "title", "body", "author_discord_id", "published_at", "audience", "meeting_topic", "announcement_meta", ...Array.from({ length: 18 }, (_, i) => `raw_text_${i + 1}`)],
   AnnouncementComments: ["id", "announcement_id", "author_discord_id", "body", "created_at", "author_name"],
   Notifications: ["id", "recipient_discord_id", "task_id", "type", "title", "body", "created_at", "read_at"],
 };

@@ -61,6 +61,8 @@ export default function App() {
   const [updates, setUpdates] = useState<Update[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [announcementComments, setAnnouncementComments] = useState<AnnouncementComment[]>([]);
+  const [newsLoading, setNewsLoading] = useState(true);
+  const [newsLoadError, setNewsLoadError] = useState(false);
   const [loading, setLoading] = useState(Boolean(token));
   const [authPending, setAuthPending] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -122,29 +124,26 @@ export default function App() {
   const reload = useCallback(async () => {
     if (!getToken()) return;
     setLoading(true); setError("");
+    setNewsLoading(true);
     try {
       const identity = await api<{ member: Member }>("/api/me", { signal: AbortSignal.timeout(20_000) });
       setMe(identity.member);
       setLoading(false);
-      const [team, work, notices, problems, reports, news, comments] = await Promise.allSettled([
-        api<{ members: Member[] }>("/api/team", { signal: AbortSignal.timeout(20_000) }),
-        api<{ tasks: Task[] }>("/api/tasks", { signal: AbortSignal.timeout(20_000) }),
-        api<{ notifications: Notice[] }>("/api/notifications", { signal: AbortSignal.timeout(20_000) }),
-        api<{ issues: Issue[] }>("/api/issues", { signal: AbortSignal.timeout(20_000) }),
-        api<{ updates: Update[] }>("/api/updates", { signal: AbortSignal.timeout(20_000) }),
-        api<{ announcements: Announcement[] }>("/api/announcements", { signal: AbortSignal.timeout(20_000) }),
-        api<{ comments: AnnouncementComment[] }>("/api/announcement-comments", { signal: AbortSignal.timeout(20_000) }),
+      let failed = false;
+      const loadSection = <T,>(path: string, update: (value: T) => void) => api<T>(path, { signal: AbortSignal.timeout(20_000) }).then(update, () => { failed = true; });
+      await Promise.all([
+        loadSection<{ members: Member[] }>("/api/team", (value) => setMembers(value.members)),
+        loadSection<{ tasks: Task[] }>("/api/tasks", (value) => setTasks(value.tasks)),
+        loadSection<{ notifications: Notice[] }>("/api/notifications", (value) => setNotifications(value.notifications)),
+        loadSection<{ issues: Issue[] }>("/api/issues", (value) => setIssues(value.issues)),
+        loadSection<{ updates: Update[] }>("/api/updates", (value) => setUpdates(value.updates)),
+        api<{ announcements: Announcement[] }>("/api/announcements", { signal: AbortSignal.timeout(20_000) }).then((value) => { setAnnouncements(value.announcements); setNewsLoadError(false); setNewsLoading(false); }, () => { failed = true; setNewsLoadError(true); setNewsLoading(false); }),
+        loadSection<{ comments: AnnouncementComment[] }>("/api/announcement-comments", (value) => setAnnouncementComments(value.comments)),
       ]);
-      if (team.status === "fulfilled") setMembers(team.value.members);
-      if (work.status === "fulfilled") setTasks(work.value.tasks);
-      if (notices.status === "fulfilled") setNotifications(notices.value.notifications);
-      if (problems.status === "fulfilled") setIssues(problems.value.issues);
-      if (reports.status === "fulfilled") setUpdates(reports.value.updates);
-      if (news.status === "fulfilled") setAnnouncements(news.value.announcements);
-      if (comments.status === "fulfilled") setAnnouncementComments(comments.value.comments);
-      if ([team, work, notices, problems, reports, news, comments].some((result) => result.status === "rejected")) setError("โหลดข้อมูลบางส่วนไม่สำเร็จ กดโหลดใหม่อีกครั้ง");
+      if (failed) setError("โหลดข้อมูลบางส่วนไม่สำเร็จ กดโหลดใหม่อีกครั้ง");
     } catch (failure) {
       setError(failure instanceof Error ? `โหลดข้อมูลผู้ใช้ไม่สำเร็จ: ${failure.message}` : "โหลดข้อมูลผู้ใช้ไม่สำเร็จ");
+      setNewsLoading(false);
       if (!getToken()) { changeToken(null); setMe(null); }
     } finally { setLoading(false); }
   }, []);
@@ -197,14 +196,14 @@ export default function App() {
       const rawFile = data.get("rawFile");
       if (rawFile instanceof File && rawFile.name && !rawFile.name.toLowerCase().endsWith(".txt")) throw new Error("เลือกไฟล์ .txt เท่านั้น");
       if (rawFile instanceof File && rawFile.size > 2_000_000) throw new Error("ไฟล์ข้อมูลดิบใหญ่เกิน 2 MB");
-      let rawText = "";
+      let rawText = String(data.get("rawText") || "");
       if (rawFile instanceof File && rawFile.name) {
         const bytes = await rawFile.arrayBuffer();
         try { rawText = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
         catch { rawText = new TextDecoder("windows-874").decode(bytes); }
       }
       if (rawText.length > 500_000) throw new Error("ข้อมูลดิบยาวเกิน 500,000 ตัวอักษร");
-      const fields = { title: data.get("title"), meetingTopic: data.get("meetingTopic"), body: data.get("body"), ...(editingAnnouncement ? (rawFile instanceof File && rawFile.name ? { rawText } : {}) : { rawText }) };
+      const fields = { title: data.get("title"), meetingTopic: data.get("meetingTopic"), body: data.get("body"), note: data.get("note"), ...(editingAnnouncement ? (rawText ? { rawText } : {}) : { rawText }) };
       if (editingAnnouncement) await api(`/api/announcements/${encodeURIComponent(editingAnnouncement.id)}`, { method: "PATCH", body: JSON.stringify(fields) });
       else await api("/api/announcements", { method: "POST", body: JSON.stringify(fields) });
       setModal(null); setEditingAnnouncement(null); setMessage(editingAnnouncement ? "แก้ไขประกาศแล้ว" : "ประกาศข่าวแล้ว"); await reload();
@@ -280,12 +279,15 @@ export default function App() {
             <div className="list-toolbar">
               <span>{updates.length} อัปเดต</span>
               <div className="toolbar-end">
-                {canAssign && <button className="text-add" onClick={() => { setEditingAnnouncement(null); setError(""); setModal("announcement"); }}><Plus size={17}/> ประกาศข่าว</button>}
+                {me.role !== "viewer" && me.discordUserId !== "1133361505832800347" && <button className="text-add" onClick={() => { setEditingAnnouncement(null); setError(""); setModal("announcement"); }}><Plus size={17}/> ประกาศข่าว</button>}
                 {canWrite && <button className="text-add" onClick={() => { setError(""); setModal("update"); }}><Plus size={17}/> เพิ่มอัปเดต</button>}
               </div>
             </div>
+            <SectionTitle title="ข่าวสาร"/>
+            {newsLoading && announcements.length === 0 && <p className="news-load-error">กำลังโหลดข่าวสาร…</p>}
+            {newsLoadError && <p className="news-load-error">อ่านข่าวสารไม่สำเร็จ <button type="button" onClick={() => void reload()}>ลองใหม่</button></p>}
+            {!newsLoading && !newsLoadError && announcements.length === 0 && <p className="news-load-error">ยังไม่มีข่าวสาร</p>}
             {announcements.length > 0 && <>
-              <SectionTitle title="ข่าวสาร"/>
               {announcements.map((item) => <AnnouncementCard
                 key={item.id}
                 announcement={item}
@@ -316,8 +318,10 @@ export default function App() {
       <form className="dialog-form" onSubmit={createAnnouncement}>
         <label>หัวข้อข่าว<input name="title" required maxLength={160} defaultValue={editingAnnouncement?.title || ""} placeholder="เช่น สรุปประชุมทีม 13/10/2569" autoFocus/></label>
         <label>ประชุมเรื่องอะไร (ถ้ามี)<input name="meetingTopic" maxLength={160} defaultValue={editingAnnouncement?.meetingTopic || ""} placeholder="เช่น กิจกรรมรอบซ้อม"/></label>
-        <label>สรุป<textarea name="body" required maxLength={2000} rows={5} defaultValue={editingAnnouncement?.body || ""} placeholder="สรุปประเด็นสำคัญ รองรับ Markdown และการขึ้นบรรทัดใหม่"/></label>
-        <label>ข้อมูลดิบต้นฉบับ (.txt) <span className="field-note">{editingAnnouncement?.hasRawText ? "มีข้อมูลดิบแล้ว เลือกไฟล์ใหม่เพื่อแทนที่" : "เก็บไว้หลังไอคอน ไม่แสดงในหน้าข่าวสาร"}</span><input name="rawFile" type="file" accept=".txt,text/plain"/></label>
+        <label>รายละเอียดประกาศ<textarea name="body" required maxLength={2000} rows={5} defaultValue={editingAnnouncement?.body || ""} placeholder="ข้อความประกาศเดิม รองรับ Markdown และการขึ้นบรรทัดใหม่"/></label>
+        <label>Note เพิ่มเติม<textarea name="note" maxLength={2000} rows={3} defaultValue={editingAnnouncement?.note || ""} placeholder="บันทึกหรือข้อสังเกตเพิ่มเติม"/></label>
+        <label>ข้อมูลดิบต้นฉบับ <span className="field-note">{editingAnnouncement?.hasRawText ? "มีข้อมูลดิบแล้ว เว้นว่างเพื่อเก็บของเดิม" : "วางข้อความดิบตรงนี้ ข้อมูลจะไม่แสดงบนหน้าข่าว"}</span><textarea name="rawText" rows={5} placeholder="วางข้อความดิบจากการประชุมหรือบันทึกต้นฉบับ"/></label>
+        <label>หรือเพิ่มจากไฟล์ .txt <span className="field-note">ถ้าเลือกไฟล์ จะใช้เนื้อหาไฟล์แทนข้อความในช่องข้อมูลดิบ</span><input name="rawFile" type="file" accept=".txt,text/plain"/></label>
         <div className="dialog-actions"><button type="button" onClick={() => setModal(null)}>ยกเลิก</button><button className="submit-button" disabled={busy}>{editingAnnouncement ? "บันทึกการแก้ไข" : "ประกาศข่าว"}</button></div>
       </form>
     </Modal>}

@@ -13,7 +13,7 @@ export type Task = { id: string; title: string; description: string; assigneeDis
 export type Notification = { id: string; recipientDiscordId: string; taskId: string; type: string; title: string; body: string; createdAt: string; readAt: string; row: number };
 export type Issue = { id: string; title: string; description: string; reporterDiscordId: string; ownerDiscordId: string; priority: string; status: string; createdAt: string; row: number };
 export type Update = { id: string; authorDiscordId: string; workDate: string; today: string; blockers: string; tomorrow: string; createdAt: string };
-export type Announcement = { id: string; title: string; body: string; authorDiscordId: string; publishedAt: string; audience: string; meetingTopic: string; hasRawText: boolean; row: number };
+export type Announcement = { id: string; title: string; body: string; authorDiscordId: string; publishedAt: string; audience: string; meetingTopic: string; note: string; hasRawText: boolean; row: number };
 export type AnnouncementComment = { id: string; announcementId: string; authorDiscordId: string; authorName: string; body: string; createdAt: string; row: number };
 
 const bytes = (value: string) => new TextEncoder().encode(value);
@@ -70,7 +70,8 @@ export function sheets(env: Env) {
           }
         }
         const range = "'AnnouncementComments'!A1:F1";
-        await call(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ range, values: [["id", "announcement_id", "author_discord_id", "body", "created_at", "author_name"]] }) });
+        const header = await call(`/values/${encodeURIComponent(range)}`) as { values?: string[][] };
+        if (header.values?.[0]?.[0] !== "id") await call(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ range, values: [["id", "announcement_id", "author_discord_id", "body", "created_at", "author_name"]] }) });
       })().catch((failure) => { commentSheetSetup.delete(env.GOOGLE_SHEET_ID); throw failure; });
       commentSheetSetup.set(env.GOOGLE_SHEET_ID, setup);
     }
@@ -92,7 +93,15 @@ export function sheets(env: Env) {
     return (await rows("Updates")).slice(1).filter((r) => r[0]).map((r) => ({ id: r[0], authorDiscordId: r[1] || "", workDate: r[2] || "", today: r[3] || "", blockers: r[4] || "", tomorrow: r[5] || "", createdAt: r[6] || "" })).reverse();
   }
   async function announcements(): Promise<Announcement[]> {
-    return (await rows("Announcements", "H")).slice(1).map((r, i) => ({ id: r[0] || "", title: r[1] || "", body: r[2] || "", authorDiscordId: r[3] || "", publishedAt: r[4] || "", audience: r[5] || "all", meetingTopic: r[6] || "", hasRawText: r[7] === "TRUE", row: i + 2 })).filter((item) => item.id).reverse();
+    return (await rows("Announcements", "H")).slice(1).map((r, i) => {
+      let note = "";
+      let hasRawText = r[7] === "TRUE";
+      if (r[7]?.startsWith("{")) {
+        try { const meta = JSON.parse(r[7]) as { note?: string; hasRawText?: boolean }; note = meta.note || ""; hasRawText = meta.hasRawText === true; }
+        catch { /* Legacy metadata remains readable. */ }
+      }
+      return { id: r[0] || "", title: r[1] || "", body: r[2] || "", authorDiscordId: r[3] || "", publishedAt: r[4] || "", audience: r[5] || "all", meetingTopic: r[6] || "", note, hasRawText, row: i + 2 };
+    }).filter((item) => item.id).reverse();
   }
   async function announcementRawText(row: number): Promise<string> {
     const result = await call(`/values/${encodeURIComponent(`'Announcements'!I${row}:Z${row}`)}`) as { values?: string[][] };
@@ -123,15 +132,15 @@ export function sheets(env: Env) {
     await call(`/values/${encodeURIComponent("'Issues'!A:I")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[id, input.title, input.description, input.reporterDiscordId, input.ownerDiscordId, input.priority, "เปิด", now, now]] }) });
     return { id };
   }
-  async function createAnnouncement(input: { title: string; body: string; authorDiscordId: string; meetingTopic: string; rawText: string }) {
+  async function createAnnouncement(input: { title: string; body: string; authorDiscordId: string; meetingTopic: string; note: string; rawText: string }) {
     const id = `NEWS-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     await ensureAnnouncementColumns();
-    await call(`/values/${encodeURIComponent("'Announcements'!A:Z")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[id, input.title, input.body, input.authorDiscordId, new Date().toISOString(), "all", input.meetingTopic, input.rawText ? "TRUE" : "", ...rawChunks(input.rawText)]] }) });
+    await call(`/values/${encodeURIComponent("'Announcements'!A:Z")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[id, input.title, input.body, input.authorDiscordId, new Date().toISOString(), "all", input.meetingTopic, JSON.stringify({ note: input.note, hasRawText: Boolean(input.rawText) }), ...rawChunks(input.rawText)]] }) });
     return { id };
   }
   async function ensureAnnouncementColumns() {
     const range = "'Announcements'!G1:Z1";
-    await call(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ range, values: [["meeting_topic", "has_raw_text", ...Array.from({ length: 18 }, (_, i) => `raw_text_${i + 1}`)]] }) });
+    await call(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ range, values: [["meeting_topic", "announcement_meta", ...Array.from({ length: 18 }, (_, i) => `raw_text_${i + 1}`)]] }) });
   }
   function rawChunks(text: string): string[] {
     const chunks: string[] = [];
@@ -143,16 +152,17 @@ export function sheets(env: Env) {
     }
     return chunks;
   }
-  async function updateAnnouncement(announcement: Announcement, input: { title: string; body: string; meetingTopic: string; rawText?: string }) {
+  async function updateAnnouncement(announcement: Announcement, input: { title: string; body: string; meetingTopic: string; note: string; rawText?: string }) {
     await ensureAnnouncementColumns();
     const row = announcement.row;
     const data = [
       { range: `'Announcements'!B${row}:C${row}`, values: [[input.title, input.body]] },
       { range: `'Announcements'!G${row}`, values: [[input.meetingTopic]] },
+      { range: `'Announcements'!H${row}`, values: [[JSON.stringify({ note: input.note, hasRawText: input.rawText !== undefined ? Boolean(input.rawText) : announcement.hasRawText })]] },
     ];
     if (input.rawText !== undefined) {
       const chunks = rawChunks(input.rawText);
-      data.push({ range: `'Announcements'!H${row}:Z${row}`, values: [[input.rawText ? "TRUE" : "", ...Array.from({ length: 18 }, (_, i) => chunks[i] || "")]] });
+      data.push({ range: `'Announcements'!I${row}:Z${row}`, values: [Array.from({ length: 18 }, (_, i) => chunks[i] || "")] });
     }
     await call("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data }) });
   }

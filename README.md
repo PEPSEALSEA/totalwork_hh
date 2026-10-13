@@ -42,7 +42,7 @@ Set the following Cloudflare Worker secrets (they have already been uploaded to 
 
 ## Sheets
 
-The API uses these tabs: `Members`, `Tasks`, `Notifications`, `Issues`, `Updates`, `Announcements`, and `AnnouncementComments`. The Worker creates `AnnouncementComments` when it is first needed. New announcements can include a meeting topic, a Markdown summary, and an optional raw `.txt` transcript. Raw text is stored in chunks in columns I:Z of `Announcements` and fetched only when a member downloads it. Announcement authors can edit their posts and attach a transcript later. Signed-in members can comment, and comment authors or admins can delete comments; viewers may only read. Membership and roles come from `Members`.
+The API uses these tabs: `Members`, `Tasks`, `Notifications`, `Issues`, `Updates`, `Announcements`, and `AnnouncementComments`. The Worker creates `AnnouncementComments` when it is first needed. Announcements retain their original body and can also include a meeting topic, a separate Note, and optional raw text pasted into a field or imported from a `.txt` file. Raw text is stored in chunks in columns I:Z of `Announcements` and fetched only when a member downloads it. Announcement authors can edit their posts and add raw text later. Signed-in members can comment, and comment authors or admins can delete comments; viewers may only read. Membership and roles come from `Members`.
 
 ## Design
 

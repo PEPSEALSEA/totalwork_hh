@@ -178,9 +178,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const title = typeof input?.title === "string" ? input.title.trim() : "";
     const text = typeof input?.body === "string" ? input.body.trim() : "";
     const meetingTopic = typeof input?.meetingTopic === "string" ? input.meetingTopic.trim() : "";
+    const note = typeof input?.note === "string" ? input.note.trim() : "";
     const rawText = typeof input?.rawText === "string" ? input.rawText : "";
-    if (!title || title.length > 160 || !text || text.length > 2000 || meetingTopic.length > 160 || rawText.length > 500_000) return error("Invalid announcement fields", 400);
-    return json(await db.createAnnouncement({ title, body: text, authorDiscordId: id, meetingTopic, rawText }), 201);
+    if (!title || title.length > 160 || !text || text.length > 2000 || meetingTopic.length > 160 || note.length > 2000 || rawText.length > 500_000) return error("Invalid announcement fields", 400);
+    return json(await db.createAnnouncement({ title, body: text, authorDiscordId: id, meetingTopic, note, rawText }), 201);
   }
   const announcementCommentsMatch = url.pathname.match(/^\/api\/announcements\/([^/]+)\/comments$/);
   if (announcementCommentsMatch && request.method === "POST") {
@@ -218,8 +219,9 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const title = typeof input?.title === "string" ? input.title.trim() : "";
     const text = typeof input?.body === "string" ? input.body.trim() : "";
     const meetingTopic = typeof input?.meetingTopic === "string" ? input.meetingTopic.trim() : "";
-    if (!title || title.length > 160 || !text || text.length > 2000 || meetingTopic.length > 160 || (input?.rawText !== undefined && (typeof input.rawText !== "string" || input.rawText.length > 500_000))) return error("Invalid announcement fields", 400);
-    await db.updateAnnouncement(announcement, { title, body: text, meetingTopic, rawText: input?.rawText as string | undefined });
+    const note = typeof input?.note === "string" ? input.note.trim() : "";
+    if (!title || title.length > 160 || !text || text.length > 2000 || meetingTopic.length > 160 || note.length > 2000 || (input?.rawText !== undefined && (typeof input.rawText !== "string" || input.rawText.length > 500_000))) return error("Invalid announcement fields", 400);
+    await db.updateAnnouncement(announcement, { title, body: text, meetingTopic, note, rawText: input?.rawText as string | undefined });
     return json({ ok: true });
   }
   if (announcementMatch && request.method === "DELETE") {

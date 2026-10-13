@@ -3,7 +3,7 @@ import { FileDown, Pencil, Send, Trash2 } from "lucide-react";
 import { api } from "./api";
 import { MarkdownText } from "./MarkdownText";
 
-export type Announcement = { id: string; title: string; body: string; authorDiscordId: string; publishedAt: string; meetingTopic: string; hasRawText: boolean };
+export type Announcement = { id: string; title: string; body: string; authorDiscordId: string; publishedAt: string; meetingTopic: string; note: string; hasRawText: boolean };
 export type AnnouncementComment = { id: string; announcementId: string; authorDiscordId: string; authorName: string; body: string; createdAt: string };
 
 type Props = {
@@ -78,8 +78,8 @@ export function AnnouncementCard({ announcement, comments, currentUserId, canCom
         {announcement.authorDiscordId === currentUserId && <button type="button" title="ลบประกาศ" aria-label={`ลบประกาศ ${announcement.title}`} onClick={() => void onDeleteAnnouncement(announcement)}><Trash2 size={16}/></button>}
       </div>
     </div>
-    <div className="announcement-summary-label">สรุป</div>
     <MarkdownText text={announcement.body}/>
+    {announcement.note && <div className="announcement-note"><strong>Note</strong><MarkdownText text={announcement.note}/></div>}
     <section className="announcement-comments" aria-label={`คอมเมนต์ของ ${announcement.title}`}>
       <h4>คอมเมนต์ <span>{comments.length}</span></h4>
       {comments.length === 0 && <p className="comment-empty">ยังไม่มีคอมเมนต์</p>}
