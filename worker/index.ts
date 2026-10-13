@@ -3,6 +3,41 @@ import { sheets, type Env, type Member } from "./sheets";
 const SITE = "https://pepsealsea.github.io/totalwork_hh/";
 const ALLOWED_ORIGINS = new Set(["https://pepsealsea.github.io", "http://localhost:5173"]);
 const statuses = new Set(["ถัดไป", "กำลังทำ", "รอตรวจ", "เสร็จแล้ว"]);
+const PREVIEW_MEMBER_ID = "1133361505832800347";
+const previewMember: Member = { discordUserId: PREVIEW_MEMBER_ID, displayName: "ผู้ทดลองใช้", role: "member", active: true, teamRole: "ทดลองใช้งาน" };
+type DiscordProfile = { id: string; username?: string; global_name?: string | null; avatar?: string | null };
+const profileCache = new Map<string, { profile: DiscordProfile | null; expires: number }>();
+
+async function discordProfile(id: string, env: Env): Promise<DiscordProfile | null> {
+  const hit = profileCache.get(id);
+  if (hit && hit.expires > Date.now()) return hit.profile;
+  if (!env.DISCORD_BOT_TOKEN) return null;
+  try {
+    const response = await fetch(`https://discord.com/api/v10/users/${id}`, { headers: { Authorization: `Bot ${env.DISCORD_BOT_TOKEN}` } });
+    if (!response.ok) return null;
+    const profile = await response.json() as DiscordProfile;
+    if (profile.id !== id) return null;
+    profileCache.set(id, { profile, expires: Date.now() + 10 * 60_000 });
+    return profile;
+  } catch { return null; }
+}
+
+async function withDiscordProfile(member: Member, env: Env): Promise<Member> {
+  const profile = await discordProfile(member.discordUserId, env);
+  if (!profile) return member;
+  const avatar = profile.avatar;
+  return {
+    ...member,
+    displayName: member.discordUserId === PREVIEW_MEMBER_ID ? profile.global_name || profile.username || member.displayName : member.displayName,
+    discordName: profile.global_name || profile.username || undefined,
+    discordUsername: profile.username,
+    avatarUrl: avatar ? `https://cdn.discordapp.com/avatars/${member.discordUserId}/${avatar}.${avatar.startsWith("a_") ? "gif" : "webp"}?size=128` : undefined,
+  };
+}
+
+function findMember(members: Member[], id: string): Member | undefined {
+  return members.find((item) => item.discordUserId === id && item.active) || (id === PREVIEW_MEMBER_ID ? previewMember : undefined);
+}
 const encoder = new TextEncoder();
 const b64 = (data: Uint8Array) => btoa(String.fromCharCode(...data)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 const unb64 = (value: string) => Uint8Array.from(atob(value.replaceAll("-", "+").replaceAll("_", "/")), (char) => char.charCodeAt(0));
@@ -80,7 +115,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const profileResponse = await fetch("https://discord.com/api/users/@me", { headers: { authorization: `Bearer ${discordToken.access_token}` } });
     if (!profileResponse.ok) return error("Discord profile request failed", 401);
     const profile = await profileResponse.json() as { id: string };
-    const member = (await db.members()).find((item) => item.discordUserId === profile.id && item.active);
+    const member = findMember(await db.members(), profile.id);
     if (!member) return error("Discord account is not a member of this workspace", 403);
     return json({ token: await sign(member.discordUserId, env.AUTH_SECRET) });
   }
@@ -88,10 +123,10 @@ async function handle(request: Request, env: Env): Promise<Response> {
   const auth = request.headers.get("authorization")?.match(/^Bearer (.+)$/i)?.[1];
   const id = auth ? await verify(auth, env.AUTH_SECRET) : null;
   if (!id) return error("Unauthorized", 401);
-  const member = (await db.members()).find((item) => item.discordUserId === id && item.active);
+  const member = findMember(await db.members(), id);
   if (!member) return error("Forbidden", 403);
-  if (url.pathname === "/api/me" && request.method === "GET") return json({ member });
-  if (url.pathname === "/api/team" && request.method === "GET") return json({ members: (await db.members()).filter((item) => item.active) });
+  if (url.pathname === "/api/me" && request.method === "GET") return json({ member: await withDiscordProfile(member, env) });
+  if (url.pathname === "/api/team" && request.method === "GET") return json({ members: await Promise.all((await db.members()).filter((item) => item.active).map((item) => withDiscordProfile(item, env))) });
   if (url.pathname === "/api/issues" && request.method === "GET") return json({ issues: await db.issues() });
   if (url.pathname === "/api/issues" && request.method === "POST") {
     if (member.role === "viewer") return error("Forbidden", 403);
