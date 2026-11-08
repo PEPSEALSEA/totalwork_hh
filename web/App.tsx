@@ -10,13 +10,14 @@ type Task = { id: string; title: string; description: string; assigneeDiscordId:
 type Notice = { id: string; taskId: string; title: string; body: string; createdAt: string; readAt: string };
 type Issue = { id: string; title: string; description: string; reporterDiscordId: string; ownerDiscordId: string; priority: string; status: string; createdAt: string };
 type Update = { id: string; authorDiscordId: string; workDate: string; today: string; blockers: string; tomorrow: string; createdAt: string };
-type Section = "tasks" | "updates" | "issues" | "team";
-type ModalKind = "task" | "issue" | "update" | "announcement" | "task-detail" | "issue-detail" | null;
+type Section = "tasks" | "calendar" | "updates" | "issues" | "team";
+type ModalKind = "day" | "task" | "issue" | "update" | "announcement" | "task-detail" | "issue-detail" | null;
 
 const PREVIEW_ID = "1133361505832800347";
 const stages = ["ถัดไป", "กำลังทำ", "รอตรวจ", "เสร็จแล้ว"];
 const tabs: { id: Section; label: string }[] = [
   { id: "tasks", label: "งาน" },
+  { id: "calendar", label: "ปฏิทิน" },
   { id: "updates", label: "อัปเดต" },
   { id: "issues", label: "ปัญหา" },
   { id: "team", label: "ทีม" },
@@ -32,6 +33,14 @@ function shortDate(value: string) {
   const date = new Date(value.length === 10 ? `${value}T00:00:00+07:00` : value);
   return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("th-TH", { day: "numeric", month: "short" });
 }
+const weekdays = ["อา", "จ", "อ", "พ", "พฤ", "ศ", "ส"];
+function monthCells(y: number, m: number) {
+  const first = new Date(Date.UTC(y, m - 1, 1));
+  const start = Date.UTC(y, m - 1, 1 - first.getUTCDay());
+  const cells = Array.from({ length: 42 }, (_, i) => { const d = new Date(start + i * 86_400_000); return { key: d.toISOString().slice(0, 10), day: d.getUTCDate(), inMonth: d.getUTCMonth() === m - 1 }; });
+  return cells.slice(35).some((cell) => cell.inMonth) ? cells : cells.slice(0, 35);
+}
+const monthLabel = (y: number, m: number) => new Date(Date.UTC(y, m - 1, 1)).toLocaleDateString("th-TH", { month: "long", year: "numeric", timeZone: "UTC" });
 // Skip Thai leading vowels so the avatar shows the first consonant.
 const initial = (name: string) => Array.from(name.trim()).find((char) => !"เแโใไ".includes(char)) || "?";
 function fail(failure: unknown, fallback: string) { return failure instanceof Error ? failure.message : fallback; }
@@ -83,6 +92,9 @@ export default function App() {
   const [onlyMine, setOnlyMine] = useState(false);
   const [feed, setFeed] = useState<"updates" | "news">("updates");
   const [issueFilter, setIssueFilter] = useState<"open" | "all">("open");
+  const [month, setMonth] = useState(() => { const [y, m] = todayKey().split("-").map(Number); return { y, m }; });
+  const [dayKey, setDayKey] = useState("");
+  const [theme, setTheme] = useState<"light" | "dark">(() => document.documentElement.dataset.theme === "dark" ? "dark" : "light");
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -173,12 +185,26 @@ export default function App() {
       .sort((a, b) => rank(a) - rank(b) || (a.dueDate || "9999").localeCompare(b.dueDate || "9999") || a.title.localeCompare(b.title));
   }, [tasks, onlyMine, me]);
   const visibleIssues = useMemo(() => issues.filter((issue) => issueFilter === "all" || issue.status !== "แก้แล้ว"), [issues, issueFilter]);
+  const tasksByDay = useMemo(() => {
+    const map = new Map<string, Task[]>();
+    for (const task of tasks) {
+      if (!task.dueDate || (onlyMine && task.assigneeDiscordId !== me?.discordUserId)) continue;
+      map.set(task.dueDate, [...(map.get(task.dueDate) ?? []), task]);
+    }
+    return map;
+  }, [tasks, onlyMine, me]);
   const lastUpdateDays = (id: string) => {
     const latest = updates.filter((item) => item.authorDiscordId === id).map((item) => item.workDate).sort().pop();
     if (!latest) return null;
     return Math.max(0, Math.round((new Date(`${today}T00:00:00+07:00`).getTime() - new Date(`${latest}T00:00:00+07:00`).getTime()) / 86_400_000));
   };
 
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    document.documentElement.dataset.theme = next;
+    localStorage.setItem("hh_theme", next);
+    setTheme(next);
+  }
   function logout() { clearToken(); changeToken(null); setMe(null); setTasks([]); setNotifications([]); setAnnouncementComments([]); location.hash = "/tasks"; }
   function open(kind: Exclude<ModalKind, null>) { setError(""); setModal(kind); }
   function openTask(task: Task) { setDetailTask(task); setModal("task-detail"); }
@@ -259,6 +285,8 @@ export default function App() {
     <button className="btn" disabled={authPending} onClick={() => void startLogin()}>{authPending ? "กำลังเชื่อมต่อ…" : "เข้าสู่ระบบด้วย Discord"}</button>
   </main>;
 
+  const chipClass = (task: Task) => (task.status === "เสร็จแล้ว" ? "chip finished" : task.dueDate < today ? "chip late" : "chip");
+  const taskChip = (task: Task, withName: boolean) => <button key={task.id} className={chipClass(task)} title={`${task.title} · ${name(task.assigneeDiscordId)}`} onClick={() => openTask(task)}>{withName ? `${name(task.assigneeDiscordId)} · ` : ""}{task.title}</button>;
   const statusControl = (task: Task) => canMove(task)
     ? <select className="status" aria-label="สถานะ" value={task.status} disabled={busy} onChange={(event) => void moveTask(task, event.target.value)}>{stages.map((stage) => <option key={stage}>{stage}</option>)}</select>
     : <span className="cell">{task.status}</span>;
@@ -269,7 +297,7 @@ export default function App() {
       <nav className="tabs" aria-label="เมนู">{tabs.map((item) => <a key={item.id} href={`#/${item.id}`} aria-current={section === item.id ? "page" : undefined}>{item.label}</a>)}</nav>
       <div className="bar-end">
         <button type="button" data-notice-trigger className="icon-btn" aria-label={`แจ้งเตือน ${unread}`} aria-expanded={noticesOpen} onClick={() => setNoticesOpen((value) => !value)}><Bell size={19}/>{unread > 0 && <span className="count">{unread}</span>}</button>
-        <details className="account"><summary aria-label="บัญชี"><Avatar name={me?.displayName || "?"} avatarUrl={me?.avatarUrl}/></summary><div className="menu"><strong>{me?.displayName}</strong><span className="muted">{me?.teamRole}</span><button className="link" onClick={logout}>ออกจากระบบ</button></div></details>
+        <details className="account"><summary aria-label="บัญชี"><Avatar name={me?.displayName || "?"} avatarUrl={me?.avatarUrl}/></summary><div className="menu"><strong>{me?.displayName}</strong><span className="muted">{me?.teamRole}</span><button className="link" onClick={toggleTheme}>{theme === "dark" ? "โหมดสว่าง" : "โหมดมืด"}</button><button className="link" onClick={logout}>ออกจากระบบ</button></div></details>
       </div>
     </div></header>
 
@@ -292,13 +320,33 @@ export default function App() {
           </div>
           {visibleTasks.length === 0 ? <Empty label="ยังไม่มีงาน" actionLabel="งานใหม่" onAction={canAssign ? () => open("task") : undefined}/> : taskView === "list"
             ? <div className="list">{visibleTasks.map((task) => <div key={task.id} className={`row row-task ${task.status === "เสร็จแล้ว" ? "done" : ""}`}>
-                <div className="cell-title"><button className="link" style={{ color: "inherit", fontWeight: "inherit", padding: 0, textAlign: "left", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }} onClick={() => openTask(task)}>{task.title}</button>{task.reviewRequested && <span className="tag">ขอให้ช่วยดู</span>}</div>
+                <div className="cell-title"><button className="title-btn" onClick={() => openTask(task)}>{task.title}</button>{task.reviewRequested && <span className="tag">ขอให้ช่วยดู</span>}</div>
                 <span className="cell"><Avatar name={name(task.assigneeDiscordId)} avatarUrl={avatar(task.assigneeDiscordId)} small/>{name(task.assigneeDiscordId)}</span>
                 <span className={`cell ${task.dueDate && task.dueDate < today && task.status !== "เสร็จแล้ว" ? "warn" : ""}`}>{shortDate(task.dueDate)}</span>
                 {statusControl(task)}
               </div>)}</div>
             : <div className="board">{stages.map((stage) => { const lane = visibleTasks.filter((task) => task.status === stage); return <section key={stage} className="lane"><h2>{stage}<span>{lane.length}</span></h2>{lane.map((task) => <button key={task.id} className="card" onClick={() => openTask(task)}>{task.title}<small>{name(task.assigneeDiscordId)}{task.dueDate ? ` · ${shortDate(task.dueDate)}` : ""}</small></button>)}</section>; })}</div>}
         </>}
+
+        {section === "calendar" && (() => {
+          const cells = monthCells(month.y, month.m);
+          const shift = (delta: number) => setMonth(({ y, m }) => { const d = new Date(Date.UTC(y, m - 1 + delta, 1)); return { y: d.getUTCFullYear(), m: d.getUTCMonth() + 1 }; });
+          const goToday = () => { const [y, m] = today.split("-").map(Number); setMonth({ y, m }); };
+          const withTasks = cells.filter((cell) => cell.inMonth && tasksByDay.has(cell.key));
+          const undated = tasks.filter((task) => !task.dueDate && task.status !== "เสร็จแล้ว" && (!onlyMine || task.assigneeDiscordId === me.discordUserId)).length;
+          return <>
+            <div className="cal-bar">
+              <div className="cal-nav"><h2 className="cal-title">{monthLabel(month.y, month.m)}</h2><button className="link" onClick={() => shift(-1)}>ก่อนหน้า</button><button className="link" onClick={goToday}>วันนี้</button><button className="link" onClick={() => shift(1)}>ถัดไป</button></div>
+              <div className="toolbar-group"><div className="seg"><button aria-pressed={!onlyMine} onClick={() => setOnlyMine(false)}>ทั้งหมด</button><button aria-pressed={onlyMine} onClick={() => setOnlyMine(true)}>ของฉัน</button></div>{canAssign && <button className="btn" onClick={() => open("task")}>งานใหม่</button>}</div>
+            </div>
+            <div className="cal-grid">{weekdays.map((weekday) => <div key={weekday} className="cal-dow">{weekday}</div>)}{cells.map((cell) => {
+              const list = tasksByDay.get(cell.key) ?? [];
+              return <div key={cell.key} className={`cal-day ${cell.inMonth ? "" : "out"} ${cell.key === today ? "today" : ""}`}><span className="cal-num">{cell.day}</span>{list.slice(0, 3).map((task) => taskChip(task, !onlyMine))}{list.length > 3 && <button className="more" onClick={() => { setDayKey(cell.key); setModal("day"); }}>อีก {list.length - 3} งาน</button>}</div>;
+            })}</div>
+            <div className="cal-agenda">{withTasks.length === 0 ? <Empty label="ไม่มีงานในเดือนนี้"/> : withTasks.map((cell) => <section key={cell.key} className="agenda-day"><h3 className={cell.key === today ? "is-today" : ""}>{shortDate(cell.key)}</h3>{(tasksByDay.get(cell.key) ?? []).map((task) => taskChip(task, !onlyMine))}</section>)}</div>
+            {undated > 0 && <p className="cal-note">{undated} งานยังไม่มีกำหนดส่ง</p>}
+          </>;
+        })()}
 
         {section === "updates" && <>
           <div className="toolbar">
@@ -341,13 +389,13 @@ export default function App() {
 
         {section === "team" && <>
           <div className="list">{members.map((item) => { const days = lastUpdateDays(item.discordUserId); return <div key={item.discordUserId} className="row row-person">
-            <span className="cell" style={{ color: "var(--ink)" }}><Avatar name={item.displayName} avatarUrl={item.avatarUrl}/><span><strong style={{ fontWeight: 500 }}>{item.displayName}</strong><br/><span className="muted" style={{ fontSize: 13 }}>{item.teamRole}</span></span></span>
+            <span className="cell" style={{ color: "var(--ink)" }}><Avatar name={item.displayName} avatarUrl={item.avatarUrl}/><span><strong style={{ fontWeight: 500 }}>{item.displayName}</strong><br/><span className="muted" style={{ fontSize: 15 }}>{item.teamRole}</span></span></span>
             <span className="cell">{item.role}</span>
             {isManager && item.role !== "viewer" ? <span className={`cell ${days === null || days >= 2 ? "warn" : ""}`}>{days === null ? "ยังไม่เคยอัปเดต" : days === 0 ? "อัปเดตวันนี้" : `${days} วันก่อน`}</span> : <span/>}
           </div>; })}</div>
           {me.discordUserId !== PREVIEW_ID && <form className="form" style={{ marginTop: 32, maxWidth: 420 }} onSubmit={saveGoogleEmail}>
             <label>อีเมล Google สำหรับปฏิทิน (ไม่บังคับ)<input name="email" type="email" maxLength={254} defaultValue={me.googleEmail || ""} placeholder="name@gmail.com"/></label>
-            <p className="muted" style={{ margin: 0, fontSize: 13 }}>ใช้แชร์ปฏิทินงานของคุณเท่านั้น คนอื่นไม่เห็น</p>
+            <p className="muted" style={{ margin: 0, fontSize: 15 }}>ใช้แชร์ปฏิทินงานของคุณเท่านั้น คนอื่นไม่เห็น</p>
             <div className="actions" style={{ justifyContent: "flex-start" }}><button className="btn" disabled={busy}>บันทึก</button></div>
           </form>}
         </>}
@@ -356,6 +404,8 @@ export default function App() {
 
     {error && !modal && <div className="toast bad" role="alert">{error}<button onClick={() => setError("")} aria-label="ปิด"><X size={14}/></button></div>}
     {message && <div className="toast" role="status">{message}</div>}
+
+    {modal === "day" && <Modal title={shortDate(dayKey)} onClose={() => setModal(null)}><div className="agenda-day" style={{ border: 0, padding: 0 }}>{(tasksByDay.get(dayKey) ?? []).map((task) => taskChip(task, true))}</div></Modal>}
 
     {modal === "task" && <Modal title="งานใหม่" error={error} onClose={() => setModal(null)}><form className="form" onSubmit={createTask}>
       <label>ชื่องาน<input name="title" required maxLength={160} autoFocus/></label>
