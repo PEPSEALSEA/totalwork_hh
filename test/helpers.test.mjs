@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { addDays, bangkokDate, buildReminder, diffEvents, eventIdForTask, personalKey, validDate, validEmail, wantedEvents } from "../worker/helpers.ts";
+import { parseAssignees, addDays, bangkokDate, buildReminder, diffEvents, eventIdForTask, personalKey, validDate, validEmail, wantedEvents } from "../worker/helpers.ts";
 
 const members = [
   { discordUserId: "111", displayName: "A", role: "member", active: true, googleEmail: "a@example.com" },
@@ -76,4 +76,24 @@ test("evening reminder mentions only active non-viewers without an update today"
   assert.deepEqual(message.mentionIds, ["222"]);
   const all = [...updates, { authorDiscordId: "222", workDate: "2026-11-08" }];
   assert.equal(buildReminder("evening", { tasks: [], members, updates: all, now, sentKeys: new Set() }), null);
+});
+
+test("parseAssignees splits, trims and de-duplicates", () => {
+  assert.deepEqual(parseAssignees("111, 222,111,"), ["111", "222"]);
+  assert.deepEqual(parseAssignees(""), []);
+});
+test("shared task appears on every assignee's calendar and in one central event", () => {
+  const tasks = [{ id: "T9", title: "shared", assigneeDiscordId: "111,222", status: "ถัดไป", dueDate: "2026-11-10" }];
+  const withEmail = members.map((m) => (m.discordUserId === "222" ? { ...m, googleEmail: "b@example.com" } : m));
+  const wanted = wantedEvents(tasks, withEmail);
+  assert.equal(wanted.get("central").length, 1);
+  assert.ok(wanted.get("central")[0].summary.startsWith("[A, B]"));
+  assert.equal(wanted.get(personalKey("111")).length, 1);
+  assert.equal(wanted.get(personalKey("222")).length, 1);
+});
+test("morning reminder reaches every assignee of a shared task", () => {
+  const now = new Date("2026-11-08T01:00:00Z");
+  const tasks = [{ id: "T9", title: "shared", assigneeDiscordId: "111,222", status: "ถัดไป", dueDate: "2026-11-08" }];
+  const message = buildReminder("morning", { tasks, members, updates: [], now, sentKeys: new Set() });
+  assert.deepEqual(message.mentionIds.sort(), ["111", "222"]);
 });

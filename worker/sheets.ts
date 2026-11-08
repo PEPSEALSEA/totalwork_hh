@@ -1,4 +1,4 @@
-import { bangkokDate } from "./helpers";
+import { bangkokDate, parseAssignees } from "./helpers";
 
 export interface Env {
   AUTH_SECRET: string;
@@ -14,7 +14,7 @@ export interface Env {
 }
 
 export type Member = { discordUserId: string; displayName: string; role: "admin" | "lead" | "member" | "viewer"; active: boolean; teamRole: string; googleEmail?: string; discordName?: string; discordUsername?: string; avatarUrl?: string };
-export type Task = { id: string; title: string; description: string; assigneeDiscordId: string; status: string; dueDate: string; updatedAt: string; reviewRequested: boolean; createdByDiscordId: string; createdAt: string; row: number };
+export type Task = { id: string; title: string; description: string; assigneeDiscordId: string; assigneeIds: string[]; status: string; dueDate: string; updatedAt: string; reviewRequested: boolean; createdByDiscordId: string; createdAt: string; row: number };
 export type Notification = { id: string; recipientDiscordId: string; taskId: string; type: string; title: string; body: string; createdAt: string; readAt: string; row: number };
 export type Issue = { id: string; title: string; description: string; reporterDiscordId: string; ownerDiscordId: string; priority: string; status: string; createdAt: string; row: number };
 export type Update = { id: string; authorDiscordId: string; workDate: string; today: string; blockers: string; tomorrow: string; createdAt: string };
@@ -89,7 +89,7 @@ export function sheets(env: Env) {
     return (await rows("Members")).slice(1).filter((r) => r[0]).map((r) => ({ discordUserId: r[0], displayName: r[1] || r[0], role: (["admin", "lead", "member", "viewer"].includes(r[2]) ? r[2] : "viewer") as Member["role"], active: r[3]?.toLowerCase() === "true", teamRole: r[5] || "สมาชิกทีม", googleEmail: r[6] || "" }));
   }
   async function tasks(): Promise<Task[]> {
-    return (await rows("Tasks")).slice(1).map((r, i) => ({ id: r[0] || "", title: r[1] || "ไม่มีชื่อ", description: r[2] || "", assigneeDiscordId: r[3] || "", status: r[4] || "ถัดไป", dueDate: r[5] || "", updatedAt: r[6] || "", reviewRequested: r[7]?.toLowerCase() === "true", createdByDiscordId: r[8] || "", createdAt: r[9] || "", row: i + 2 })).filter((t) => t.id);
+    return (await rows("Tasks")).slice(1).map((r, i) => ({ id: r[0] || "", title: r[1] || "ไม่มีชื่อ", description: r[2] || "", assigneeDiscordId: r[3] || "", assigneeIds: parseAssignees(r[3] || ""), status: r[4] || "ถัดไป", dueDate: r[5] || "", updatedAt: r[6] || "", reviewRequested: r[7]?.toLowerCase() === "true", createdByDiscordId: r[8] || "", createdAt: r[9] || "", row: i + 2 })).filter((t) => t.id);
   }
   async function notifications(discordId: string): Promise<Notification[]> {
     return (await rows("Notifications")).slice(1).map((r, i) => ({ id: r[0] || "", recipientDiscordId: r[1] || "", taskId: r[2] || "", type: r[3] || "", title: r[4] || "", body: r[5] || "", createdAt: r[6] || "", readAt: r[7] || "", row: i + 2 })).filter((n) => n.id && n.recipientDiscordId === discordId).reverse();
@@ -188,14 +188,14 @@ export function sheets(env: Env) {
     const related = (await rows("Notifications")).slice(1).flatMap((row, i) => row[2] === task.id ? [`'Notifications'!A${i + 2}:H${i + 2}`] : []);
     await call("/values:batchClear", { method: "POST", body: JSON.stringify({ ranges: [`'Tasks'!A${task.row}:J${task.row}`, ...related] }) });
   }
-  async function createTask(input: { title: string; description: string; assigneeDiscordId: string; dueDate: string; reviewRequested: boolean; creator: Member }) {
+  async function createTask(input: { title: string; description: string; assigneeDiscordIds: string[]; dueDate: string; reviewRequested: boolean; creator: Member }) {
     const id = `TASK-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const now = new Date().toISOString();
-    await call(`/values/${encodeURIComponent("'Tasks'!A:J")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[id, input.title, input.description, input.assigneeDiscordId, "ถัดไป", input.dueDate, now, String(input.reviewRequested).toUpperCase(), input.creator.discordUserId, now]] }) });
+    await call(`/values/${encodeURIComponent("'Tasks'!A:J")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[id, input.title, input.description, input.assigneeDiscordIds.join(","), "ถัดไป", input.dueDate, now, String(input.reviewRequested).toUpperCase(), input.creator.discordUserId, now]] }) });
     let notificationCreated = true;
     try {
       const heading = input.reviewRequested ? "มีงานที่อยากให้คุณช่วยดู" : "มีงานใหม่ที่มอบหมายให้คุณ";
-      await call(`/values/${encodeURIComponent("'Notifications'!A:H")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[crypto.randomUUID(), input.assigneeDiscordId, id, input.reviewRequested ? "review_request" : "new_task", heading, `${input.creator.displayName} มอบหมายงาน: ${input.title}`, now, ""]] }) });
+      await call(`/values/${encodeURIComponent("'Notifications'!A:H")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: input.assigneeDiscordIds.map((assignee) => [crypto.randomUUID(), assignee, id, input.reviewRequested ? "review_request" : "new_task", heading, `${input.creator.displayName} มอบหมายงาน: ${input.title}`, now, ""]) }) });
     } catch { notificationCreated = false; }
     return { id, notificationCreated };
   }

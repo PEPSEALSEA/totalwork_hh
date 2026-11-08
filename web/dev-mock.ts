@@ -10,10 +10,10 @@ const members = [
   { discordUserId: "100000000000000004", displayName: "หวาย", role: "member", active: true, teamRole: "เกม" },
 ];
 const tasks = [
-  { id: "TASK-1", title: "ปรับหน้าแรกของคอร์ส", description: "ย้ายราคาและวันที่ขึ้นบนสุด", assigneeDiscordId: members[1].discordUserId, status: "กำลังทำ", dueDate: day(1), reviewRequested: true, updatedAt: "", createdByDiscordId: members[0].discordUserId },
-  { id: "TASK-2", title: "โปสเตอร์รอบใหม่", description: "", assigneeDiscordId: members[2].discordUserId, status: "ถัดไป", dueDate: day(-2), reviewRequested: false, updatedAt: "", createdByDiscordId: members[0].discordUserId },
-  { id: "TASK-3", title: "สรุปคำถามจากผู้ปกครอง", description: "", assigneeDiscordId: members[0].discordUserId, status: "รอตรวจ", dueDate: day(4), reviewRequested: false, updatedAt: "", createdByDiscordId: members[0].discordUserId },
-  { id: "TASK-4", title: "ทดสอบเกมรอบซ้อม", description: "", assigneeDiscordId: members[3].discordUserId, status: "เสร็จแล้ว", dueDate: day(-5), reviewRequested: false, updatedAt: "", createdByDiscordId: members[0].discordUserId },
+  { id: "TASK-1", title: "ปรับหน้าแรกของคอร์ส", description: "ย้ายราคาและวันที่ขึ้นบนสุด", assigneeDiscordId: `${members[1].discordUserId},${members[2].discordUserId}`, assigneeIds: [members[1].discordUserId, members[2].discordUserId], status: "กำลังทำ", dueDate: day(1), reviewRequested: true, updatedAt: "", createdByDiscordId: members[0].discordUserId },
+  { id: "TASK-2", title: "โปสเตอร์รอบใหม่", description: "", assigneeDiscordId: members[2].discordUserId, assigneeIds: [members[2].discordUserId], status: "ถัดไป", dueDate: day(-2), reviewRequested: false, updatedAt: "", createdByDiscordId: members[0].discordUserId },
+  { id: "TASK-3", title: "สรุปคำถามจากผู้ปกครอง", description: "", assigneeDiscordId: members[0].discordUserId, assigneeIds: [members[0].discordUserId], status: "รอตรวจ", dueDate: day(4), reviewRequested: false, updatedAt: "", createdByDiscordId: members[0].discordUserId },
+  { id: "TASK-4", title: "ทดสอบเกมรอบซ้อม", description: "", assigneeDiscordId: members[3].discordUserId, assigneeIds: [members[3].discordUserId], status: "เสร็จแล้ว", dueDate: day(-5), reviewRequested: false, updatedAt: "", createdByDiscordId: members[0].discordUserId },
 ];
 const updates = [
   { id: "U1", authorDiscordId: members[1].discordUserId, workDate: today, today: "แก้ข้อความหน้าแรก", blockers: "รอรูปจากเทียน", tomorrow: "ทดสอบบนมือถือ", createdAt: "" },

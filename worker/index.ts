@@ -256,11 +256,14 @@ async function handle(request: Request, env: Env): Promise<Response> {
     const input = await body(request);
     const title = typeof input?.title === "string" ? input.title.trim() : "";
     const description = typeof input?.description === "string" ? input.description.trim() : "";
-    const assigneeDiscordId = typeof input?.assigneeDiscordId === "string" ? input.assigneeDiscordId : "";
+    const rawAssignees: unknown[] = Array.isArray(input?.assigneeDiscordIds) ? input.assigneeDiscordIds : typeof input?.assigneeDiscordId === "string" && input.assigneeDiscordId ? [input.assigneeDiscordId] : [];
+    const assigneeDiscordIds = [...new Set(rawAssignees.filter((value): value is string => typeof value === "string"))];
     const dueDate = typeof input?.dueDate === "string" ? input.dueDate : "";
     if (!title || title.length > 160 || description.length > 2000 || (dueDate && !/^\d{4}-\d{2}-\d{2}$/.test(dueDate))) return error("Invalid task fields", 400);
-    if (!(await db.members()).some((item) => item.discordUserId === assigneeDiscordId && item.active)) return error("Assignee not found", 400);
-    return json(await db.createTask({ title, description, assigneeDiscordId, dueDate, reviewRequested: input?.reviewRequested === true, creator: member }), 201);
+    if (!assigneeDiscordIds.length || assigneeDiscordIds.length > 10) return error("Invalid assignees", 400);
+    const activeMembers = await db.members();
+    if (!assigneeDiscordIds.every((assignee) => activeMembers.some((item) => item.discordUserId === assignee && item.active))) return error("Assignee not found", 400);
+    return json(await db.createTask({ title, description, assigneeDiscordIds, dueDate, reviewRequested: input?.reviewRequested === true, creator: member }), 201);
   }
   const taskMatch = url.pathname.match(/^\/api\/tasks\/([^/]+)$/);
   if (taskMatch && request.method === "DELETE") {
@@ -277,7 +280,7 @@ async function handle(request: Request, env: Env): Promise<Response> {
     if (typeof input?.status !== "string" || !statuses.has(input.status)) return error("Invalid status", 400);
     const task = (await db.tasks()).find((item) => item.id === decodeURIComponent(statusMatch[1]));
     if (!task) return error("Task not found", 404);
-    if (member.role === "member" && task.assigneeDiscordId !== member.discordUserId) return error("Forbidden", 403);
+    if (member.role === "member" && !task.assigneeIds.includes(member.discordUserId)) return error("Forbidden", 403);
     await db.updateTaskStatus(task.row, input.status);
     return json({ ok: true });
   }

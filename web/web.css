@@ -156,6 +156,8 @@ button.row:hover{background:var(--hover)}
 .form input:focus,.form textarea:focus,.form select:focus,.comment-form textarea:focus{border-color:var(--accent);outline:0}
 .form .check{display:flex;align-items:center;gap:10px;color:var(--ink)}
 .form .check input{accent-color:var(--accent);width:20px;height:20px}
+.people{border:1px solid var(--line);border-radius:8px;padding:10px 14px;display:grid;grid-template-columns:repeat(2,1fr);gap:6px 16px;margin:0}
+.people legend{padding:0 6px;color:var(--muted);font-size:16px}
 .pair{display:grid;grid-template-columns:1fr 1fr;gap:14px}
 .actions{display:flex;justify-content:flex-end;gap:14px;align-items:center;margin-top:6px}
 .dialog-error{color:var(--danger);margin:0 0 14px}

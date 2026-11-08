@@ -11,6 +11,9 @@ export const MANAGED_PROPERTY = "totalwork";
 export const CENTRAL_KEY = "central";
 const BANGKOK_OFFSET_MS = 7 * 3600 * 1000;
 
+/** A task may have several assignees, stored in one cell as comma-separated Discord ids. */
+export const parseAssignees = (value: string): string[] => [...new Set(value.split(",").map((part) => part.trim()).filter(Boolean))];
+
 export const personalKey = (discordId: string) => `member:${discordId}`;
 
 /** Calendar date (YYYY-MM-DD) in Asia/Bangkok (UTC+7, no DST). */
@@ -45,12 +48,12 @@ export function wantedEvents(tasks: HelperTask[], members: HelperMember[]): Map<
   const result = new Map<string, WantedEvent[]>();
   const push = (key: string, event: WantedEvent) => result.set(key, [...(result.get(key) ?? []), event]);
   for (const task of activeTasks(tasks)) {
-    const assignee = byId.get(task.assigneeDiscordId);
-    if (!assignee) continue;
+    const assignees = parseAssignees(task.assigneeDiscordId).map((id) => byId.get(id)).filter((m): m is HelperMember => Boolean(m));
+    if (!assignees.length) continue;
     const id = eventIdForTask(task.id);
     const description = `งาน ${task.id} · สถานะ: ${task.status}`;
-    push(CENTRAL_KEY, { id, summary: `[${assignee.displayName}] ${task.title}`, date: task.dueDate, description });
-    if (assignee.googleEmail) push(personalKey(assignee.discordUserId), { id, summary: task.title, date: task.dueDate, description });
+    push(CENTRAL_KEY, { id, summary: `[${assignees.map((m) => m.displayName).join(", ")}] ${task.title}`, date: task.dueDate, description });
+    for (const assignee of assignees) if (assignee.googleEmail) push(personalKey(assignee.discordUserId), { id, summary: task.title, date: task.dueDate, description });
   }
   return result;
 }
@@ -85,7 +88,7 @@ export function buildReminder(kind: "morning" | "evening", input: { tasks: Helpe
     const mentionIds: string[] = [];
     const lines: string[] = [];
     for (const member of members) {
-      const due = activeTasks(input.tasks).filter((t) => t.assigneeDiscordId === member.discordUserId && t.dueDate <= addDays(today, 1));
+      const due = activeTasks(input.tasks).filter((t) => parseAssignees(t.assigneeDiscordId).includes(member.discordUserId) && t.dueDate <= addDays(today, 1));
       if (!due.length) continue;
       mentionIds.push(member.discordUserId);
       lines.push(`<@${member.discordUserId}>`, ...due.map((t) => `• ${t.dueDate < today ? "เลยกำหนด" : t.dueDate === today ? "วันนี้" : "พรุ่งนี้"} — ${t.title}`));
