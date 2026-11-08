@@ -10,7 +10,7 @@ type Task = { id: string; title: string; description: string; assigneeDiscordId:
 type Notice = { id: string; taskId: string; title: string; body: string; createdAt: string; readAt: string };
 type Issue = { id: string; title: string; description: string; reporterDiscordId: string; ownerDiscordId: string; priority: string; status: string; createdAt: string };
 type Update = { id: string; authorDiscordId: string; workDate: string; today: string; blockers: string; tomorrow: string; createdAt: string };
-type Section = "tasks" | "calendar" | "updates" | "issues" | "team";
+type Section = "tasks" | "calendar" | "updates" | "issues" | "team" | "assign";
 type ModalKind = "day" | "task" | "issue" | "update" | "announcement" | "task-detail" | "issue-detail" | null;
 
 const PREVIEW_ID = "1133361505832800347";
@@ -21,6 +21,7 @@ const tabs: { id: Section; label: string }[] = [
   { id: "updates", label: "อัปเดต" },
   { id: "issues", label: "ปัญหา" },
   { id: "team", label: "ทีม" },
+  { id: "assign", label: "มอบหมาย" },
 ];
 
 function currentSection(): Section {
@@ -94,6 +95,9 @@ export default function App() {
   const [issueFilter, setIssueFilter] = useState<"open" | "all">("open");
   const [month, setMonth] = useState(() => { const [y, m] = todayKey().split("-").map(Number); return { y, m }; });
   const [dayKey, setDayKey] = useState("");
+  const [selected, setSelected] = useState<string[]>([]);
+  const [taskText, setTaskText] = useState("");
+  const assignForm = useRef<HTMLFormElement>(null);
   const [theme, setTheme] = useState<"light" | "dark">(() => document.documentElement.dataset.theme === "dark" ? "dark" : "light");
 
   useEffect(() => {
@@ -177,6 +181,7 @@ export default function App() {
   const isManager = me?.role === "admin" || me?.role === "lead";
   const canMove = (task: Task) => me?.role === "admin" || me?.role === "lead" || (me?.role === "member" && task.assigneeDiscordId === me.discordUserId);
   const today = todayKey();
+  useEffect(() => { if (me && section === "assign" && !isManager) location.hash = "/tasks"; }, [me, section, isManager]);
 
   const visibleTasks = useMemo(() => {
     const rank = (task: Task) => (task.status === "เสร็จแล้ว" ? 1 : 0);
@@ -220,6 +225,18 @@ export default function App() {
   const createTask = submit(async (data) => {
     const result = await api<{ notificationCreated: boolean }>("/api/tasks", { method: "POST", body: JSON.stringify({ title: data.get("title"), description: data.get("description"), assigneeDiscordId: data.get("assigneeDiscordId"), dueDate: data.get("dueDate"), reviewRequested: data.get("reviewRequested") === "on" }) });
     setModal(null); setMessage(result.notificationCreated ? "สร้างงานแล้ว" : "สร้างงานแล้ว แจ้งเตือนไม่สำเร็จ"); await reload();
+  }, "สร้างงานไม่สำเร็จ");
+  const assignTasks = submit(async (data) => {
+    const lines = taskText.split("\n").map((line) => line.trim()).filter(Boolean);
+    const jobs = selected.flatMap((id) => lines.map((title) => ({ id, title })));
+    if (!jobs.length) throw new Error("เลือกผู้รับงานและพิมพ์งาน");
+    if (jobs.length > 20) throw new Error("สร้างได้ครั้งละไม่เกิน 20 งาน");
+    let done = 0;
+    for (const job of jobs) {
+      try { await api("/api/tasks", { method: "POST", body: JSON.stringify({ title: job.title, description: data.get("description"), assigneeDiscordId: job.id, dueDate: data.get("dueDate"), reviewRequested: data.get("reviewRequested") === "on" }) }); done++; }
+      catch (failure) { setError(`สร้างได้ ${done} จาก ${jobs.length} งาน: ${fail(failure, "ผิดพลาด")}`); await reload(); return; }
+    }
+    setTaskText(""); setSelected([]); assignForm.current?.reset(); setMessage(`สร้าง ${done} งานแล้ว`); await reload();
   }, "สร้างงานไม่สำเร็จ");
   const createIssue = submit(async (data) => {
     await api("/api/issues", { method: "POST", body: JSON.stringify({ title: data.get("title"), description: data.get("description"), ownerDiscordId: data.get("ownerDiscordId"), priority: data.get("priority") }) });
@@ -294,7 +311,7 @@ export default function App() {
   return <div>
     <header className="bar"><div className="bar-inner">
       <span className="brand">Totalwork</span>
-      <nav className="tabs" aria-label="เมนู">{tabs.map((item) => <a key={item.id} href={`#/${item.id}`} aria-current={section === item.id ? "page" : undefined}>{item.label}</a>)}</nav>
+      <nav className="tabs" aria-label="เมนู">{tabs.filter((item) => item.id !== "assign" || isManager).map((item) => <a key={item.id} href={`#/${item.id}`} aria-current={section === item.id ? "page" : undefined}>{item.label}</a>)}</nav>
       <div className="bar-end">
         <button type="button" data-notice-trigger className="icon-btn" aria-label={`แจ้งเตือน ${unread}`} aria-expanded={noticesOpen} onClick={() => setNoticesOpen((value) => !value)}><Bell size={19}/>{unread > 0 && <span className="count">{unread}</span>}</button>
         <details className="account"><summary aria-label="บัญชี"><Avatar name={me?.displayName || "?"} avatarUrl={me?.avatarUrl}/></summary><div className="menu"><strong>{me?.displayName}</strong><span className="muted">{me?.teamRole}</span><button className="link" onClick={toggleTheme}>{theme === "dark" ? "โหมดสว่าง" : "โหมดมืด"}</button><button className="link" onClick={logout}>ออกจากระบบ</button></div></details>
@@ -327,6 +344,31 @@ export default function App() {
               </div>)}</div>
             : <div className="board">{stages.map((stage) => { const lane = visibleTasks.filter((task) => task.status === stage); return <section key={stage} className="lane"><h2>{stage}<span>{lane.length}</span></h2>{lane.map((task) => <button key={task.id} className="card" onClick={() => openTask(task)}>{task.title}<small>{name(task.assigneeDiscordId)}{task.dueDate ? ` · ${shortDate(task.dueDate)}` : ""}</small></button>)}</section>; })}</div>}
         </>}
+
+        {section === "assign" && isManager && (() => {
+          const people = members.filter((item) => item.role !== "viewer");
+          const lineCount = taskText.split("\n").filter((line) => line.trim()).length;
+          const total = lineCount * selected.length;
+          const toggle = (id: string) => setSelected((current) => (current.includes(id) ? current.filter((value) => value !== id) : [...current, id]));
+          return <form ref={assignForm} className="form" onSubmit={assignTasks}>
+            <div className="toolbar"><h2 className="section-h">ผู้รับงาน</h2><div className="tools"><button type="button" className="link" onClick={() => setSelected(people.map((item) => item.discordUserId))}>เลือกทั้งหมด</button><button type="button" className="link" onClick={() => setSelected([])}>ล้าง</button></div></div>
+            <div className="list">{people.map((item) => {
+              const open = tasks.filter((task) => task.assigneeDiscordId === item.discordUserId && task.status !== "เสร็จแล้ว");
+              const late = open.filter((task) => task.dueDate && task.dueDate < today).length;
+              const days = lastUpdateDays(item.discordUserId);
+              return <button type="button" key={item.discordUserId} className="row row-assign" aria-pressed={selected.includes(item.discordUserId)} onClick={() => toggle(item.discordUserId)}>
+                <span className="cell" style={{ color: "var(--ink)" }}><span className="tick"/><Avatar name={item.displayName} avatarUrl={item.avatarUrl} small/>{item.displayName}</span>
+                <span className="cell">เปิดอยู่ {open.length}</span>
+                <span className={`cell ${late ? "warn" : ""}`}>เลยกำหนด {late}</span>
+                <span className={`cell ${days === null || days >= 2 ? "warn" : ""}`}>{days === null ? "ยังไม่เคยอัปเดต" : days === 0 ? "อัปเดตวันนี้" : `${days} วันก่อน`}</span>
+              </button>;
+            })}</div>
+            <label>งาน (หนึ่งบรรทัดต่อหนึ่งงาน)<textarea value={taskText} onChange={(event) => setTaskText(event.target.value)} rows={4}/></label>
+            <div className="pair"><label>กำหนดส่ง<input name="dueDate" type="date"/></label><label>รายละเอียด (ไม่บังคับ)<input name="description" maxLength={2000}/></label></div>
+            <label className="check"><input name="reviewRequested" type="checkbox"/>ขอให้ช่วยดู</label>
+            <div className="actions"><span className="muted">{total > 0 ? `${total} งาน` : ""}</span><button className="btn" disabled={busy || total === 0}>สร้างงาน</button></div>
+          </form>;
+        })()}
 
         {section === "calendar" && (() => {
           const cells = monthCells(month.y, month.m);

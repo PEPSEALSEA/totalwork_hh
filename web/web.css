@@ -67,6 +67,12 @@ button.row:hover{background:var(--hover)}
 .row-task{grid-template-columns:minmax(0,1fr) 190px 110px 140px}
 .row-issue{grid-template-columns:minmax(0,1fr) 180px 90px 90px}
 .row-person{grid-template-columns:minmax(0,1fr) 100px 170px}
+.row-assign{grid-template-columns:minmax(0,1fr) 120px 150px 160px}
+.section-h{font-size:18px;font-weight:600;margin:0}
+.tick{width:22px;height:22px;border:2px solid var(--muted);border-radius:6px;flex:none;position:relative}
+.row[aria-pressed=true]{background:var(--hover)}
+.row[aria-pressed=true] .tick{background:var(--accent);border-color:var(--accent)}
+.row[aria-pressed=true] .tick:after{content:"";position:absolute;left:5px;top:1px;width:6px;height:11px;border:solid var(--on-accent);border-width:0 2px 2px 0;transform:rotate(45deg)}
 .cell-title{min-width:0;font-weight:500;font-size:18px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .cell-title .tag{font-weight:400;color:var(--muted);margin-left:10px;font-size:15px}
 .title-btn{border:0;background:none;padding:0;text-align:left;max-width:100%;overflow:hidden;text-overflow:ellipsis;color:inherit;font-weight:inherit;font-size:inherit}
@@ -184,6 +190,7 @@ button.row:hover{background:var(--hover)}
   .row-task>:nth-child(1){grid-area:t}.row-task>:nth-child(2){grid-area:a}.row-task>:nth-child(3){grid-area:d;justify-self:end}.row-task>:nth-child(4){grid-area:s}
   .row-issue{grid-template-columns:minmax(0,1fr) auto}.row-issue>:nth-child(2),.row-issue>:nth-child(3){display:none}
   .row-person{grid-template-columns:minmax(0,1fr) auto}.row-person>:nth-child(2){display:none}
+  .row-assign{grid-template-columns:minmax(0,1fr) auto}.row-assign>:nth-child(2),.row-assign>:nth-child(4){display:none}
   .board{grid-template-columns:repeat(4,240px)}
   .pair{grid-template-columns:1fr}
   .cal-grid{display:none}.cal-agenda{display:block}
