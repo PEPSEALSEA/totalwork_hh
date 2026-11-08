@@ -38,7 +38,7 @@ The frontend requests a Discord authorization URL and a signed state value from 
 
 ## Configuration
 
-Set the following Cloudflare Worker secrets (they have already been uploaded to this account): `AUTH_SECRET`, `AUTH_DISCORD_ID`, `AUTH_DISCORD_SECRET`, `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, and `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`. The unused `DISCORD_BOT_TOKEN` is also present but the current API does not need it. Files `.env.local` and `.dev.vars` are ignored by Git. The Discord client secret and bot token shared in chat should be rotated.
+Set the following Cloudflare Worker secrets (they have already been uploaded to this account): `AUTH_SECRET`, `AUTH_DISCORD_ID`, `AUTH_DISCORD_SECRET`, `GOOGLE_SHEET_ID`, `GOOGLE_SERVICE_ACCOUNT_EMAIL`, and `GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY`. `DISCORD_BOT_TOKEN` is used only to look up Discord profiles (name and avatar). For reminders, optionally add `DISCORD_WEBHOOK_URL` (a team-server channel webhook; never commit it). Files `.env.local` and `.dev.vars` are ignored by Git. The Discord client secret and bot token shared in chat should be rotated.
 
 ## Sheets
 
@@ -47,3 +47,11 @@ The API uses these tabs: `Members`, `Tasks`, `Notifications`, `Issues`, `Updates
 ## Design
 
 The frontend uses a compact icon rail, line separated work lists, and popups for editing. The default theme is dark. The layout follows the visual reference supplied for this project; the code and content are specific to Hamster Hub.
+
+## Calendar sync and reminders (added 2026-11-08, not yet deployed)
+
+- `worker/jobs.ts` syncs open tasks that have a due date to Google Calendar (one central calendar plus one per member who entered a Google email in the Team page) and posts Discord webhook reminders (morning: tasks due or overdue; evening: members with no update today, Bangkok time).
+- Cron triggers (UTC) are in `wrangler.jsonc`. Both jobs are **off** until the vars `CALENDAR_SYNC_ENABLED` / `REMINDERS_ENABLED` are set to `"true"`.
+- Admin-only `POST /api/admin/sync` runs a dry run by default; send `{"dryRun": false}` to apply, `{"share": true}` to email calendar invites (never done by cron), `{"reminder": "morning"|"evening"}` to test a reminder.
+- Members can set their own Google email (`PATCH /api/me/google-email`); `/api/team` never returns it.
+- The service account must have the Calendar API enabled in its Cloud project. `npm run test:worker` runs the pure-helper tests.

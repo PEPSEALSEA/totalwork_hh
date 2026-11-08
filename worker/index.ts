@@ -1,4 +1,6 @@
 import { sheets, type Env, type Member } from "./sheets";
+import { validEmail } from "./helpers";
+import { runCalendarSync, runReminder } from "./jobs";
 
 const SITE = "https://pepsealsea.github.io/totalwork_hh/";
 const ALLOWED_ORIGINS = new Set(["https://pepsealsea.github.io", "http://localhost:5173"]);
@@ -126,7 +128,24 @@ async function handle(request: Request, env: Env): Promise<Response> {
   const member = findMember(await db.members(), id);
   if (!member) return error("Forbidden", 403);
   if (url.pathname === "/api/me" && request.method === "GET") return json({ member: await withDiscordProfile(member, env) });
-  if (url.pathname === "/api/team" && request.method === "GET") return json({ members: await Promise.all((await db.members()).filter((item) => item.active).map((item) => withDiscordProfile(item, env))) });
+  if (url.pathname === "/api/team" && request.method === "GET") return json({ members: await Promise.all((await db.members()).filter((item) => item.active).map(async (item) => { const { googleEmail, ...visible } = await withDiscordProfile(item, env); return visible; })) });
+  if (url.pathname === "/api/me/google-email" && request.method === "PATCH") {
+    if (id === PREVIEW_MEMBER_ID) return error("Forbidden", 403);
+    const input = await body(request);
+    const email = typeof input?.email === "string" ? input.email.trim().toLowerCase() : "";
+    if (email && !validEmail(email)) return error("Invalid email", 400);
+    await db.setMemberGoogleEmail(member.discordUserId, email);
+    return json({ ok: true, googleEmail: email });
+  }
+  if (url.pathname === "/api/admin/sync" && request.method === "POST") {
+    if (member.role !== "admin") return error("Forbidden", 403);
+    const input = await body(request);
+    // Safe by default: a dry run unless the caller explicitly sends dryRun:false.
+    const dryRun = input?.dryRun !== false;
+    const reminder = input?.reminder === "morning" || input?.reminder === "evening" ? input.reminder : undefined;
+    const calendar = input?.calendar === false ? undefined : await runCalendarSync(env, { dryRun, share: input?.share === true });
+    return json({ calendar, reminder: reminder ? await runReminder(env, reminder, { dryRun }) : undefined });
+  }
   if (url.pathname === "/api/issues" && request.method === "GET") return json({ issues: await db.issues() });
   if (url.pathname === "/api/issues" && request.method === "POST") {
     if (member.role === "viewer") return error("Forbidden", 403);
@@ -274,7 +293,19 @@ async function handle(request: Request, env: Env): Promise<Response> {
   return error("Not found", 404);
 }
 
+type ScheduledController = { cron: string; scheduledTime: number };
+
 export default {
+  // Cron schedules (UTC) are declared in wrangler.jsonc. Each job is off unless its flag is "true".
+  async scheduled(controller: ScheduledController, env: Env): Promise<void> {
+    try {
+      if (controller.cron === "*/10 * * * *" && env.CALENDAR_SYNC_ENABLED === "true") await runCalendarSync(env, { dryRun: false, share: false });
+      if (controller.cron === "0 1 * * *" && env.REMINDERS_ENABLED === "true") await runReminder(env, "morning", { dryRun: false });
+      if (controller.cron === "0 13 * * *" && env.REMINDERS_ENABLED === "true") await runReminder(env, "evening", { dryRun: false });
+    } catch (failure) {
+      console.error("Scheduled job failed", failure instanceof Error ? failure.message : "unknown error");
+    }
+  },
   async fetch(request: Request, env: Env): Promise<Response> {
     const origin = request.headers.get("origin");
     if (origin && !ALLOWED_ORIGINS.has(origin)) return error("Invalid origin", 403);

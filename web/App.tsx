@@ -1,53 +1,60 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { Bell, Check, ChevronDown, ChevronRight, ClipboardList, Columns3, Ellipsis, Grid2X2, House, List, LogOut, MessageSquareWarning, Plus, RefreshCw, Trash2, Users, X } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { Bell, X } from "lucide-react";
 import { API, api, clearToken, getToken, setToken } from "./api";
 import { MarkdownText } from "./MarkdownText";
 import { AnnouncementCard, type Announcement, type AnnouncementComment } from "./AnnouncementCard";
 
-type Member = { discordUserId: string; displayName: string; role: "admin" | "lead" | "member" | "viewer"; active: boolean; teamRole: string; discordName?: string; discordUsername?: string; avatarUrl?: string };
+type Role = "admin" | "lead" | "member" | "viewer";
+type Member = { discordUserId: string; displayName: string; role: Role; active: boolean; teamRole: string; googleEmail?: string; discordName?: string; discordUsername?: string; avatarUrl?: string };
 type Task = { id: string; title: string; description: string; assigneeDiscordId: string; status: string; dueDate: string; reviewRequested: boolean; updatedAt: string; createdByDiscordId: string };
 type Notice = { id: string; taskId: string; title: string; body: string; createdAt: string; readAt: string };
 type Issue = { id: string; title: string; description: string; reporterDiscordId: string; ownerDiscordId: string; priority: string; status: string; createdAt: string };
 type Update = { id: string; authorDiscordId: string; workDate: string; today: string; blockers: string; tomorrow: string; createdAt: string };
-type Section = "home" | "tasks" | "issues" | "updates" | "notifications" | "team";
+type Section = "tasks" | "updates" | "issues" | "team";
 type ModalKind = "task" | "issue" | "update" | "announcement" | "task-detail" | "issue-detail" | null;
 
+const PREVIEW_ID = "1133361505832800347";
 const stages = ["ถัดไป", "กำลังทำ", "รอตรวจ", "เสร็จแล้ว"];
-const navigation = [
-  { id: "home", label: "ภาพรวม", Icon: House },
-  { id: "tasks", label: "งาน", Icon: ClipboardList },
-  { id: "issues", label: "ปัญหา", Icon: MessageSquareWarning },
-  { id: "updates", label: "อัปเดต", Icon: Grid2X2 },
-  { id: "notifications", label: "แจ้งเตือน", Icon: Bell },
-  { id: "team", label: "ทีม", Icon: Users },
-] as const;
-const headings: Record<Section, { title: string; caption: string }> = {
-  home: { title: "ภาพรวม", caption: "สิ่งที่ทีมกำลังทำในตอนนี้" },
-  tasks: { title: "งานทั้งหมด", caption: "มอบหมาย ติดตาม และส่งตรวจงานในที่เดียว" },
-  issues: { title: "ปัญหา", caption: "เรื่องที่ทีมต้องช่วยกันแก้" },
-  updates: { title: "อัปเดตทีม", caption: "วันนี้ทำอะไร และพรุ่งนี้จะทำอะไรต่อ" },
-  notifications: { title: "การแจ้งเตือน", caption: "งานใหม่และสิ่งที่มีคนอยากให้คุณช่วยดู" },
-  team: { title: "ทีม", caption: "คนที่ทำงานร่วมกันในพื้นที่นี้" },
-};
+const tabs: { id: Section; label: string }[] = [
+  { id: "tasks", label: "งาน" },
+  { id: "updates", label: "อัปเดต" },
+  { id: "issues", label: "ปัญหา" },
+  { id: "team", label: "ทีม" },
+];
 
 function currentSection(): Section {
   const name = location.hash.slice(2);
-  return navigation.some((item) => item.id === name) ? name as Section : "home";
+  return tabs.some((item) => item.id === name) ? name as Section : "tasks";
 }
-function displayDate(value: string) {
-  if (!value) return "—";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("th-TH", { day: "numeric", month: "short", year: "numeric" });
+const todayKey = () => new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Bangkok" });
+function shortDate(value: string) {
+  if (!value) return "";
+  const date = new Date(value.length === 10 ? `${value}T00:00:00+07:00` : value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("th-TH", { day: "numeric", month: "short" });
 }
+// Skip Thai leading vowels so the avatar shows the first consonant.
+const initial = (name: string) => Array.from(name.trim()).find((char) => !"เแโใไ".includes(char)) || "?";
+function fail(failure: unknown, fallback: string) { return failure instanceof Error ? failure.message : fallback; }
+
 function Avatar({ name, avatarUrl, small = false }: { name: string; avatarUrl?: string; small?: boolean }) {
-  return <span className={`person-initial ${small ? "person-initial-small" : ""}`} aria-hidden="true">{name.trim().slice(0, 1) || "?"}{avatarUrl && <img src={avatarUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.style.display = "none"; }}/>}</span>;
+  return <span className={`avatar ${small ? "small" : ""}`} aria-hidden="true">{initial(name)}{avatarUrl && <img src={avatarUrl} alt="" loading="lazy" onError={(event) => { event.currentTarget.style.display = "none"; }}/>}</span>;
 }
 function Modal({ title, error, onClose, children }: { title: string; error?: string; onClose: () => void; children: ReactNode }) {
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => { const node = dialog.current; node?.showModal(); return () => node?.close(); }, []);
-  return <dialog ref={dialog} className="app-dialog" onClose={onClose} onClick={(event) => { if (event.target === dialog.current) dialog.current?.close(); }}>
-    <div className="dialog-content"><header className="dialog-head"><h2>{title}</h2><button type="button" className="icon-action" aria-label="ปิด" onClick={() => dialog.current?.close()}><X size={20}/></button></header>{error && <p className="dialog-error" role="alert">{error}</p>}{children}</div>
+  return <dialog ref={dialog} className="dialog" onClose={onClose} onClick={(event) => { if (event.target === dialog.current) dialog.current?.close(); }}>
+    <div className="dialog-body">
+      <header className="dialog-head"><h2>{title}</h2><button type="button" className="icon-btn" aria-label="ปิด" onClick={() => dialog.current?.close()}><X size={18}/></button></header>
+      {error && <p className="dialog-error" role="alert">{error}</p>}
+      {children}
+    </div>
   </dialog>;
+}
+function Empty({ label, actionLabel, onAction }: { label: string; actionLabel?: string; onAction?: () => void }) {
+  return <div className="empty"><span>{label}</span>{onAction && <button type="button" className="btn" onClick={onAction}>{actionLabel}</button>}</div>;
+}
+function Actions({ onCancel, submit, busy }: { onCancel: () => void; submit: string; busy: boolean }) {
+  return <div className="actions"><button type="button" className="link" onClick={onCancel}>ยกเลิก</button><button className="btn" disabled={busy}>{submit}</button></div>;
 }
 
 export default function App() {
@@ -61,8 +68,6 @@ export default function App() {
   const [updates, setUpdates] = useState<Update[]>([]);
   const [announcements, setAnnouncements] = useState<Announcement[]>([]);
   const [announcementComments, setAnnouncementComments] = useState<AnnouncementComment[]>([]);
-  const [newsLoading, setNewsLoading] = useState(true);
-  const [newsLoadError, setNewsLoadError] = useState(false);
   const [loading, setLoading] = useState(Boolean(token));
   const [authPending, setAuthPending] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -74,7 +79,10 @@ export default function App() {
   const [editingAnnouncement, setEditingAnnouncement] = useState<Announcement | null>(null);
   const [noticesOpen, setNoticesOpen] = useState(false);
   const noticesRef = useRef<HTMLDivElement>(null);
-  const [taskView, setTaskView] = useState<"list" | "board">("board");
+  const [taskView, setTaskView] = useState<"list" | "board">("list");
+  const [onlyMine, setOnlyMine] = useState(false);
+  const [feed, setFeed] = useState<"updates" | "news">("updates");
+  const [issueFilter, setIssueFilter] = useState<"open" | "all">("open");
 
   useEffect(() => {
     const params = new URLSearchParams(location.search);
@@ -85,14 +93,14 @@ export default function App() {
       history.replaceState(null, "", `${location.pathname}#/tasks`);
       const expected = sessionStorage.getItem("hh_oauth_state");
       sessionStorage.removeItem("hh_oauth_state");
-      if (oauthError) setError("Discord ไม่อนุญาตให้เข้าสู่ระบบ กรุณาลองอีกครั้ง");
-      else if (!code || !state || state !== expected) setError("การยืนยันตัวตนไม่ตรงกัน กรุณาเริ่มเข้าสู่ระบบใหม่");
+      if (oauthError) setError("Discord ไม่อนุญาต ลองอีกครั้ง");
+      else if (!code || !state || state !== expected) setError("ยืนยันตัวตนไม่ตรงกัน ลองอีกครั้ง");
       else {
         setAuthPending(true);
         void fetch(`${API}/api/auth/callback/discord`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code, state }) })
           .then(async (response) => { const result = await response.json() as { token?: string; error?: string }; if (!response.ok || !result.token) throw new Error(result.error || "เข้าสู่ระบบไม่สำเร็จ"); return result.token; })
           .then((newToken) => { setToken(newToken); changeToken(newToken); setSection("tasks"); setError(""); })
-          .catch((failure) => setError(failure instanceof Error ? failure.message : "เข้าสู่ระบบไม่สำเร็จ"))
+          .catch((failure) => setError(fail(failure, "เข้าสู่ระบบไม่สำเร็จ")))
           .finally(() => setAuthPending(false));
       }
     }
@@ -100,7 +108,7 @@ export default function App() {
     addEventListener("hashchange", onHash);
     return () => removeEventListener("hashchange", onHash);
   }, []);
-  useEffect(() => { if (!message) return; const timer = setTimeout(() => setMessage(""), 4500); return () => clearTimeout(timer); }, [message]);
+  useEffect(() => { if (!message) return; const timer = setTimeout(() => setMessage(""), 4000); return () => clearTimeout(timer); }, [message]);
   useEffect(() => {
     if (!noticesOpen) return;
     const onPointer = (event: PointerEvent) => { if (event.target instanceof Element && event.target.closest("[data-notice-trigger]")) return; if (!noticesRef.current?.contains(event.target as Node)) setNoticesOpen(false); };
@@ -118,32 +126,30 @@ export default function App() {
       sessionStorage.setItem("hh_oauth_state", result.state);
       clearToken();
       location.assign(result.authorizationUrl);
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "เริ่มเข้าสู่ระบบไม่สำเร็จ"); setAuthPending(false); }
+    } catch (failure) { setError(fail(failure, "เริ่มเข้าสู่ระบบไม่สำเร็จ")); setAuthPending(false); }
   }
 
   const reload = useCallback(async () => {
     if (!getToken()) return;
     setLoading(true); setError("");
-    setNewsLoading(true);
     try {
       const identity = await api<{ member: Member }>("/api/me", { signal: AbortSignal.timeout(20_000) });
       setMe(identity.member);
       setLoading(false);
       let failed = false;
-      const loadSection = <T,>(path: string, update: (value: T) => void) => api<T>(path, { signal: AbortSignal.timeout(20_000) }).then(update, () => { failed = true; });
+      const load = <T,>(path: string, update: (value: T) => void) => api<T>(path, { signal: AbortSignal.timeout(20_000) }).then(update, () => { failed = true; });
       await Promise.all([
-        loadSection<{ members: Member[] }>("/api/team", (value) => setMembers(value.members)),
-        loadSection<{ tasks: Task[] }>("/api/tasks", (value) => setTasks(value.tasks)),
-        loadSection<{ notifications: Notice[] }>("/api/notifications", (value) => setNotifications(value.notifications)),
-        loadSection<{ issues: Issue[] }>("/api/issues", (value) => setIssues(value.issues)),
-        loadSection<{ updates: Update[] }>("/api/updates", (value) => setUpdates(value.updates)),
-        api<{ announcements: Announcement[] }>("/api/announcements", { signal: AbortSignal.timeout(20_000) }).then((value) => { setAnnouncements(value.announcements); setNewsLoadError(false); setNewsLoading(false); }, () => { failed = true; setNewsLoadError(true); setNewsLoading(false); }),
-        loadSection<{ comments: AnnouncementComment[] }>("/api/announcement-comments", (value) => setAnnouncementComments(value.comments)),
+        load<{ members: Member[] }>("/api/team", (value) => setMembers(value.members)),
+        load<{ tasks: Task[] }>("/api/tasks", (value) => setTasks(value.tasks)),
+        load<{ notifications: Notice[] }>("/api/notifications", (value) => setNotifications(value.notifications)),
+        load<{ issues: Issue[] }>("/api/issues", (value) => setIssues(value.issues)),
+        load<{ updates: Update[] }>("/api/updates", (value) => setUpdates(value.updates)),
+        load<{ announcements: Announcement[] }>("/api/announcements", (value) => setAnnouncements(value.announcements)),
+        load<{ comments: AnnouncementComment[] }>("/api/announcement-comments", (value) => setAnnouncementComments(value.comments)),
       ]);
-      if (failed) setError("โหลดข้อมูลบางส่วนไม่สำเร็จ กดโหลดใหม่อีกครั้ง");
+      if (failed) setError("โหลดข้อมูลไม่ครบ ลองโหลดใหม่");
     } catch (failure) {
-      setError(failure instanceof Error ? `โหลดข้อมูลผู้ใช้ไม่สำเร็จ: ${failure.message}` : "โหลดข้อมูลผู้ใช้ไม่สำเร็จ");
-      setNewsLoading(false);
+      setError(fail(failure, "โหลดข้อมูลไม่สำเร็จ"));
       if (!getToken()) { changeToken(null); setMe(null); }
     } finally { setLoading(false); }
   }, []);
@@ -151,188 +157,266 @@ export default function App() {
   useEffect(() => { if (!token) return; const timer = setInterval(() => { void reload(); }, 60_000); return () => clearInterval(timer); }, [token, reload]);
 
   const person = (id: string) => members.find((member) => member.discordUserId === id) || (me?.discordUserId === id ? me : undefined);
-  const name = (id: string) => person(id)?.displayName || (id === "1133361505832800347" ? "ผู้ทดลองใช้" : "ยังไม่กำหนด");
+  const name = (id: string) => person(id)?.displayName || (id === PREVIEW_ID ? "ผู้ทดลองใช้" : "-");
   const avatar = (id: string) => person(id)?.avatarUrl;
   const unread = notifications.filter((item) => !item.readAt).length;
-  const openIssues = issues.filter((issue) => issue.status !== "แก้แล้ว");
-  const canAssign = Boolean(me && me.role !== "viewer" && members.some((member) => member.discordUserId === me.discordUserId));
   const canWrite = me?.role !== "viewer";
+  const canAssign = Boolean(me && me.role !== "viewer");
+  const isManager = me?.role === "admin" || me?.role === "lead";
   const canMove = (task: Task) => me?.role === "admin" || me?.role === "lead" || (me?.role === "member" && task.assigneeDiscordId === me.discordUserId);
-  function logout() { clearToken(); changeToken(null); setMe(null); setTasks([]); setNotifications([]); setAnnouncementComments([]); location.hash = "/home"; }
-  function openDetail(task: Task) { setDetailTask(task); setModal("task-detail"); }
-  function openEditAnnouncement(item: Announcement) { setEditingAnnouncement(item); setError(""); setModal("announcement"); }
+  const today = todayKey();
 
-  async function createTask(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError("");
-    const data = new FormData(event.currentTarget);
-    try {
-      const result = await api<{ notificationCreated: boolean }>("/api/tasks", { method: "POST", body: JSON.stringify({ title: data.get("title"), description: data.get("description"), assigneeDiscordId: data.get("assigneeDiscordId"), dueDate: data.get("dueDate"), reviewRequested: data.get("reviewRequested") === "on" }) });
-      setModal(null); setMessage(result.notificationCreated ? "มอบหมายงานและส่งการแจ้งเตือนแล้ว" : "มอบหมายงานแล้ว แต่แจ้งเตือนไม่สำเร็จ"); await reload();
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "บันทึกงานไม่สำเร็จ"); }
-    finally { setBusy(false); }
-  }
-  async function createIssue(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError("");
-    const data = new FormData(event.currentTarget);
-    try {
-      await api("/api/issues", { method: "POST", body: JSON.stringify({ title: data.get("title"), description: data.get("description"), ownerDiscordId: data.get("ownerDiscordId"), priority: data.get("priority") }) });
-      setModal(null); setMessage("รายงานปัญหาแล้ว"); await reload();
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "บันทึกปัญหาไม่สำเร็จ"); }
-    finally { setBusy(false); }
-  }
-  async function createUpdate(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError("");
-    const data = new FormData(event.currentTarget);
-    try {
-      await api("/api/updates", { method: "POST", body: JSON.stringify({ today: data.get("today"), blockers: data.get("blockers"), tomorrow: data.get("tomorrow") }) });
-      setModal(null); setMessage("บันทึกอัปเดตแล้ว"); await reload();
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "บันทึกอัปเดตไม่สำเร็จ"); }
-    finally { setBusy(false); }
-  }
-  async function createAnnouncement(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault(); setBusy(true); setError("");
-    const data = new FormData(event.currentTarget);
-    try {
-      const rawFile = data.get("rawFile");
-      if (rawFile instanceof File && rawFile.name && !rawFile.name.toLowerCase().endsWith(".txt")) throw new Error("เลือกไฟล์ .txt เท่านั้น");
-      if (rawFile instanceof File && rawFile.size > 2_000_000) throw new Error("ไฟล์ข้อมูลดิบใหญ่เกิน 2 MB");
-      let rawText = String(data.get("rawText") || "");
-      if (rawFile instanceof File && rawFile.name) {
-        const bytes = await rawFile.arrayBuffer();
-        try { rawText = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
-        catch { rawText = new TextDecoder("windows-874").decode(bytes); }
-      }
-      if (rawText.length > 500_000) throw new Error("ข้อมูลดิบยาวเกิน 500,000 ตัวอักษร");
-      const fields = { title: data.get("title"), meetingTopic: data.get("meetingTopic"), body: data.get("body"), note: data.get("note"), ...(editingAnnouncement ? (rawText ? { rawText } : {}) : { rawText }) };
-      if (editingAnnouncement) await api(`/api/announcements/${encodeURIComponent(editingAnnouncement.id)}`, { method: "PATCH", body: JSON.stringify(fields) });
-      else await api("/api/announcements", { method: "POST", body: JSON.stringify(fields) });
-      setModal(null); setEditingAnnouncement(null); setMessage(editingAnnouncement ? "แก้ไขประกาศแล้ว" : "ประกาศข่าวแล้ว"); await reload();
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "ประกาศข่าวไม่สำเร็จ"); }
-    finally { setBusy(false); }
-  }
-  async function deleteAnnouncement(item: Announcement) {
-    if (!window.confirm(`ลบประกาศ “${item.title}”?`)) return;
+  const visibleTasks = useMemo(() => {
+    const rank = (task: Task) => (task.status === "เสร็จแล้ว" ? 1 : 0);
+    return tasks
+      .filter((task) => !onlyMine || task.assigneeDiscordId === me?.discordUserId)
+      .sort((a, b) => rank(a) - rank(b) || (a.dueDate || "9999").localeCompare(b.dueDate || "9999") || a.title.localeCompare(b.title));
+  }, [tasks, onlyMine, me]);
+  const visibleIssues = useMemo(() => issues.filter((issue) => issueFilter === "all" || issue.status !== "แก้แล้ว"), [issues, issueFilter]);
+  const lastUpdateDays = (id: string) => {
+    const latest = updates.filter((item) => item.authorDiscordId === id).map((item) => item.workDate).sort().pop();
+    if (!latest) return null;
+    return Math.max(0, Math.round((new Date(`${today}T00:00:00+07:00`).getTime() - new Date(`${latest}T00:00:00+07:00`).getTime()) / 86_400_000));
+  };
+
+  function logout() { clearToken(); changeToken(null); setMe(null); setTasks([]); setNotifications([]); setAnnouncementComments([]); location.hash = "/tasks"; }
+  function open(kind: Exclude<ModalKind, null>) { setError(""); setModal(kind); }
+  function openTask(task: Task) { setDetailTask(task); setModal("task-detail"); }
+  function openIssue(issue: Issue) { setDetailIssue(issue); setModal("issue-detail"); }
+  function openAnnouncement(item: Announcement | null) { setEditingAnnouncement(item); open("announcement"); }
+
+  async function run(action: () => Promise<void>, fallback: string) {
     setBusy(true); setError("");
-    try {
-      await api(`/api/announcements/${encodeURIComponent(item.id)}`, { method: "DELETE" });
-      setMessage("ลบประกาศแล้ว"); await reload();
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "ลบประกาศไม่สำเร็จ"); }
-    finally { setBusy(false); }
+    try { await action(); } catch (failure) { setError(fail(failure, fallback)); } finally { setBusy(false); }
+  }
+  const submit = (handler: (data: FormData) => Promise<void>, fallback: string) => (event: FormEvent<HTMLFormElement>) => { event.preventDefault(); const data = new FormData(event.currentTarget); void run(() => handler(data), fallback); };
+
+  const createTask = submit(async (data) => {
+    const result = await api<{ notificationCreated: boolean }>("/api/tasks", { method: "POST", body: JSON.stringify({ title: data.get("title"), description: data.get("description"), assigneeDiscordId: data.get("assigneeDiscordId"), dueDate: data.get("dueDate"), reviewRequested: data.get("reviewRequested") === "on" }) });
+    setModal(null); setMessage(result.notificationCreated ? "สร้างงานแล้ว" : "สร้างงานแล้ว แจ้งเตือนไม่สำเร็จ"); await reload();
+  }, "สร้างงานไม่สำเร็จ");
+  const createIssue = submit(async (data) => {
+    await api("/api/issues", { method: "POST", body: JSON.stringify({ title: data.get("title"), description: data.get("description"), ownerDiscordId: data.get("ownerDiscordId"), priority: data.get("priority") }) });
+    setModal(null); setMessage("บันทึกแล้ว"); await reload();
+  }, "บันทึกไม่สำเร็จ");
+  const createUpdate = submit(async (data) => {
+    await api("/api/updates", { method: "POST", body: JSON.stringify({ today: data.get("today"), blockers: data.get("blockers"), tomorrow: data.get("tomorrow") }) });
+    setModal(null); setMessage("บันทึกแล้ว"); await reload();
+  }, "บันทึกไม่สำเร็จ");
+  const saveAnnouncement = submit(async (data) => {
+    const rawFile = data.get("rawFile");
+    if (rawFile instanceof File && rawFile.name && !rawFile.name.toLowerCase().endsWith(".txt")) throw new Error("ใช้ไฟล์ .txt เท่านั้น");
+    if (rawFile instanceof File && rawFile.size > 2_000_000) throw new Error("ไฟล์ใหญ่เกิน 2 MB");
+    let rawText = String(data.get("rawText") || "");
+    if (rawFile instanceof File && rawFile.name) {
+      const bytes = await rawFile.arrayBuffer();
+      try { rawText = new TextDecoder("utf-8", { fatal: true }).decode(bytes); }
+      catch { rawText = new TextDecoder("windows-874").decode(bytes); }
+    }
+    if (rawText.length > 500_000) throw new Error("ข้อความยาวเกิน 500,000 ตัวอักษร");
+    const fields = { title: data.get("title"), meetingTopic: data.get("meetingTopic"), body: data.get("body"), note: data.get("note"), ...(editingAnnouncement ? (rawText ? { rawText } : {}) : { rawText }) };
+    if (editingAnnouncement) await api(`/api/announcements/${encodeURIComponent(editingAnnouncement.id)}`, { method: "PATCH", body: JSON.stringify(fields) });
+    else await api("/api/announcements", { method: "POST", body: JSON.stringify(fields) });
+    setModal(null); setEditingAnnouncement(null); setMessage("บันทึกแล้ว"); await reload();
+  }, "บันทึกไม่สำเร็จ");
+  const saveGoogleEmail = submit(async (data) => {
+    const email = String(data.get("email") || "");
+    await api("/api/me/google-email", { method: "PATCH", body: JSON.stringify({ email }) });
+    setMessage(email.trim() ? "บันทึกแล้ว" : "ลบแล้ว"); await reload();
+  }, "บันทึกไม่สำเร็จ");
+
+  async function deleteAnnouncement(item: Announcement) {
+    if (!window.confirm(`ลบ “${item.title}”?`)) return;
+    await run(async () => { await api(`/api/announcements/${encodeURIComponent(item.id)}`, { method: "DELETE" }); setMessage("ลบแล้ว"); await reload(); }, "ลบไม่สำเร็จ");
   }
   async function changeIssueStatus(issue: Issue, status: "เปิด" | "แก้แล้ว") {
-    setBusy(true); setError("");
-    try {
-      await api(`/api/issues/${encodeURIComponent(issue.id)}/status`, { method: "PATCH", body: JSON.stringify({ status }) });
-      setDetailIssue({ ...issue, status }); setMessage(status === "แก้แล้ว" ? "ปิดปัญหาแล้ว" : "เปิดปัญหาอีกครั้งแล้ว"); await reload();
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "เปลี่ยนสถานะไม่สำเร็จ"); }
-    finally { setBusy(false); }
+    await run(async () => { await api(`/api/issues/${encodeURIComponent(issue.id)}/status`, { method: "PATCH", body: JSON.stringify({ status }) }); setDetailIssue({ ...issue, status }); await reload(); }, "เปลี่ยนสถานะไม่สำเร็จ");
   }
   async function deleteIssue(issue: Issue) {
-    if (!window.confirm(`ลบปัญหา “${issue.title}”?`)) return;
-    setBusy(true); setError("");
-    try {
-      await api(`/api/issues/${encodeURIComponent(issue.id)}`, { method: "DELETE" });
-      setModal(null); setMessage("ลบปัญหาแล้ว"); await reload();
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "ลบปัญหาไม่สำเร็จ"); }
-    finally { setBusy(false); }
+    if (!window.confirm(`ลบ “${issue.title}”?`)) return;
+    await run(async () => { await api(`/api/issues/${encodeURIComponent(issue.id)}`, { method: "DELETE" }); setModal(null); setMessage("ลบแล้ว"); await reload(); }, "ลบไม่สำเร็จ");
   }
   async function deleteTask(task: Task) {
-    if (!window.confirm(`ลบงาน “${task.title}” และการแจ้งเตือนของงานนี้?`)) return;
-    setBusy(true); setError("");
-    try {
-      await api(`/api/tasks/${encodeURIComponent(task.id)}`, { method: "DELETE" });
-      setModal(null); setMessage("ลบงานแล้ว"); await reload();
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "ลบงานไม่สำเร็จ"); }
-    finally { setBusy(false); }
+    if (!window.confirm(`ลบ “${task.title}”?`)) return;
+    await run(async () => { await api(`/api/tasks/${encodeURIComponent(task.id)}`, { method: "DELETE" }); setModal(null); setMessage("ลบแล้ว"); await reload(); }, "ลบไม่สำเร็จ");
   }
   async function moveTask(task: Task, status: string) {
-    setBusy(true); setError("");
-    try { await api(`/api/tasks/${encodeURIComponent(task.id)}/status`, { method: "PATCH", body: JSON.stringify({ status }) }); setModal(null); setMessage("เปลี่ยนสถานะงานแล้ว"); await reload(); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : "เปลี่ยนสถานะไม่สำเร็จ"); }
-    finally { setBusy(false); }
+    await run(async () => { await api(`/api/tasks/${encodeURIComponent(task.id)}/status`, { method: "PATCH", body: JSON.stringify({ status }) }); if (detailTask?.id === task.id) setDetailTask({ ...task, status }); await reload(); }, "เปลี่ยนสถานะไม่สำเร็จ");
   }
   async function markRead(notice: Notice) {
     try { await api(`/api/notifications/${encodeURIComponent(notice.id)}/read`, { method: "PATCH" }); await reload(); }
-    catch (failure) { setError(failure instanceof Error ? failure.message : "บันทึกไม่สำเร็จ"); }
+    catch (failure) { setError(fail(failure, "บันทึกไม่สำเร็จ")); }
   }
   function openNotice(notice: Notice) {
     setNoticesOpen(false);
     const task = tasks.find((item) => item.id === notice.taskId);
-    if (task) openDetail(task);
-    else { location.hash = "/tasks"; setMessage("ไม่พบงานนี้แล้ว"); }
+    if (task) openTask(task); else location.hash = "/tasks";
   }
 
-  if (!token) return <main className="entry-page"><div className="entry-brand"><span className="entry-symbol">hh.</span><span>totalwork</span></div><div className="entry-main"><p className="entry-intro">Hamster Hub / Team workspace</p><h1>งานของทีม<br/>อยู่ที่นี่</h1><p className="entry-description">เปิดดูงานที่ได้รับมอบหมาย ติดตามปัญหา และบอกทีมว่าพรุ่งนี้จะทำอะไรต่อ</p>{error && <p className="inline-error" role="alert">{error}</p>}<button className="entry-button" disabled={authPending} onClick={() => void startLogin()}>{authPending ? "กำลังเชื่อมต่อ Discord…" : "เข้าสู่ระบบด้วย Discord"}<ChevronRight size={19}/></button><p className="entry-note">ใช้ได้เฉพาะ Discord ที่ได้รับสิทธิ์</p></div><div className="entry-bottom"><span>Hamster Hub</span><span>PRIVATE WORKSPACE</span></div></main>;
+  if (!token) return <main className="login">
+    <h1>Totalwork</h1>
+    {error && <p className="error" role="alert">{error}</p>}
+    <button className="btn" disabled={authPending} onClick={() => void startLogin()}>{authPending ? "กำลังเชื่อมต่อ…" : "เข้าสู่ระบบด้วย Discord"}</button>
+  </main>;
 
-  return <div className="workspace">
-    <aside className="rail" aria-label="เมนูหลัก"><a className="rail-brand" href="#/home" aria-label="ไปหน้าภาพรวม">hh.</a><nav className="rail-links">{navigation.map(({ id, label, Icon }) => id === "notifications" ? <button key={id} type="button" data-notice-trigger className={`rail-link ${noticesOpen ? "selected" : ""}`} aria-label={label} aria-expanded={noticesOpen} onClick={() => setNoticesOpen((open) => !open)}><Icon size={20}/>{unread > 0 && <span className="rail-unread"/>}</button> : <a key={id} href={`#/${id}`} title={label} aria-label={label} aria-current={section === id ? "page" : undefined} className={`rail-link ${section === id ? "selected" : ""}`}><Icon size={20} strokeWidth={section === id ? 2.3 : 1.8}/></a>)}</nav><details className="account-menu"><summary aria-label="บัญชีของฉัน" title={me?.displayName || "บัญชี"}><Avatar name={me?.displayName || "H"} avatarUrl={me?.avatarUrl}/></summary><div className="account-popover"><strong>{me?.displayName}</strong>{me?.discordUsername && <small>@{me.discordUsername}</small>}<small>{me?.teamRole}</small><button onClick={logout}><LogOut size={15}/> ออกจากระบบ</button></div></details></aside>
-    <div className="workspace-main"><header className="workspace-top"><span>HAMSTER HUB <span className="top-slash">/</span> {headings[section].title}</span><div><button className="icon-action" onClick={() => void reload()} aria-label="โหลดข้อมูลใหม่" title="โหลดข้อมูลใหม่"><RefreshCw size={17}/></button><button type="button" data-notice-trigger className="icon-action top-bell" aria-label={`การแจ้งเตือน ${unread} รายการ`} aria-expanded={noticesOpen} onClick={() => setNoticesOpen((open) => !open)}><Bell size={18}/>{unread > 0 && <span className="bell-badge">{unread}</span>}</button><span className="top-name">{me?.displayName || "สมาชิก"}</span></div></header>
-      {noticesOpen && <div ref={noticesRef} className="notification-panel" role="dialog" aria-label="การแจ้งเตือน"><header><strong>การแจ้งเตือน</strong><button className="icon-action" onClick={() => setNoticesOpen(false)} aria-label="ปิดการแจ้งเตือน"><X size={17}/></button></header><p>{unread} ยังไม่ได้อ่าน</p><div className="notification-list">{notifications.length === 0 ? <span className="notification-empty">ยังไม่มีการแจ้งเตือน</span> : notifications.map((notice) => <article key={notice.id} className={notice.readAt ? "" : "unread"}><button className="notification-open" onClick={() => openNotice(notice)}><strong>{notice.title}</strong><span>{notice.body}</span><small>{displayDate(notice.createdAt)}</small></button>{!notice.readAt && <button className="notification-read" onClick={() => void markRead(notice)} aria-label={`อ่านแล้ว: ${notice.title}`}><Check size={16}/></button>}</article>)}</div></div>}
-      <main className="workspace-content"><div className="page-intro"><div><h1>{headings[section].title}</h1><p>{headings[section].caption}</p></div><span className="page-date">{new Date().toLocaleDateString("th-TH", { day: "numeric", month: "long", year: "numeric" })}</span></div>
-        {error && !modal && <div className="toast toast-error" role="alert">{error}<button onClick={() => setError("")} aria-label="ปิดข้อความ"><X size={14}/></button></div>}
-        {message && <div className="toast toast-success" role="status">{message}<button onClick={() => setMessage("")} aria-label="ปิดข้อความ"><X size={14}/></button></div>}
-        {!me ? <div className="loading-text">{loading ? "กำลังโหลดข้อมูลงาน…" : <button type="button" className="text-add" onClick={() => void reload()}>โหลดข้อมูลใหม่</button>}</div> : <>
-          {section === "home" && <><div className="overview-line"><strong>สวัสดี, {me.displayName}</strong><span>งานของทีมวันนี้</span></div><div className="overview-stats"><div><strong>{tasks.filter((task) => task.assigneeDiscordId === me.discordUserId && task.status !== "เสร็จแล้ว").length}</strong><span>งานของฉัน</span></div><div><strong>{tasks.filter((task) => task.status === "กำลังทำ").length}</strong><span>กำลังทำ</span></div><div><strong>{tasks.filter((task) => task.status === "รอตรวจ").length}</strong><span>รอตรวจ</span></div><div><strong>{unread}</strong><span>แจ้งเตือนใหม่</span></div></div><SectionTitle title="งานล่าสุด" action={<a href="#/tasks">ดูทั้งหมด <ChevronRight size={15}/></a>}/><TaskTable tasks={tasks.slice(0, 7)} name={name} avatar={avatar} canMove={canMove} busy={busy} onDetail={openDetail} onMove={moveTask}/><div className="home-bottom"><div><SectionTitle title="ปัญหาที่เปิดอยู่" action={<a href="#/issues">ดูทั้งหมด <ChevronRight size={15}/></a>}/>{openIssues.length === 0 ? <EmptyText>ไม่มีปัญหาที่เปิดอยู่</EmptyText> : openIssues.slice(0, 3).map((issue) => <div className="short-row" key={issue.id}><span>{issue.title}</span><small>{issue.priority}</small></div>)}</div><div><SectionTitle title="อัปเดตล่าสุด" action={<a href="#/updates">ดูทั้งหมด <ChevronRight size={15}/></a>}/>{updates.length === 0 ? <EmptyText>ยังไม่มีอัปเดตจากทีม</EmptyText> : updates.slice(0, 3).map((item) => <div className="short-row" key={item.id}><span>{name(item.authorDiscordId)}: {item.today}</span><small>{displayDate(item.workDate)}</small></div>)}</div></div></>}
-          {section === "tasks" && <><div className="list-toolbar"><div className="view-switch"><button className={taskView === "list" ? "active" : ""} onClick={() => setTaskView("list")} aria-pressed={taskView === "list"}><List size={16}/> รายการ</button><button className={taskView === "board" ? "active" : ""} onClick={() => setTaskView("board")} aria-pressed={taskView === "board"}><Columns3 size={16}/> บอร์ด</button></div><div className="toolbar-end"><span>{tasks.length} งาน</span>{canAssign && <button className="text-add" onClick={() => { setError(""); setModal("task"); }}><Plus size={17}/> มอบหมายงาน</button>}</div></div>{taskView === "list" ? <TaskTable tasks={tasks} name={name} avatar={avatar} canMove={canMove} busy={busy} onDetail={openDetail} onMove={moveTask}/> : <div className="simple-board">{stages.map((stage) => <section key={stage} className="board-lane"><header><span className={`stage-dot ${stageClass(stage)}`}/><h2>{stage}</h2><small>{tasks.filter((task) => task.status === stage).length}</small></header>{tasks.filter((task) => task.status === stage).length === 0 ? <p className="lane-empty">ยังไม่มีงาน</p> : tasks.filter((task) => task.status === stage).map((task) => <button key={task.id} className="lane-task" onClick={() => openDetail(task)}><strong>{task.title}</strong><span>{name(task.assigneeDiscordId)}</span></button>)}</section>)}</div>}</>}
-          {section === "issues" && <><div className="list-toolbar"><span>{issues.filter((issue) => issue.status !== "แก้แล้ว").length} ยังเปิดอยู่ · {issues.length} ทั้งหมด</span>{canWrite && <button className="text-add" onClick={() => { setError(""); setModal("issue"); }}><Plus size={17}/> รายงานปัญหา</button>}</div><div className="table-head issue-columns"><span>ปัญหา</span><span>ผู้ดูแล</span><span>ความสำคัญ</span><span>สถานะ</span></div>{issues.length === 0 ? <EmptyText>ยังไม่มีปัญหา กด “รายงานปัญหา” เมื่อมีเรื่องที่ทีมต้องช่วยกันแก้</EmptyText> : issues.map((issue) => <button type="button" className="table-row issue-columns issue-row" key={issue.id} onClick={() => { setDetailIssue(issue); setModal("issue-detail"); }}><span className="cell-main"><strong>{issue.title}</strong><small>{issue.description || "กดเพื่อดูรายละเอียด"}</small></span><span>{issue.ownerDiscordId ? name(issue.ownerDiscordId) : "ยังไม่กำหนด"}</span><span>{issue.priority}</span><span className={issue.status === "แก้แล้ว" ? "issue-resolved" : "issue-open"}>{issue.status}</span></button>)}</>}
-          {section === "updates" && <>
-            <div className="list-toolbar">
-              <span>{updates.length} อัปเดต</span>
-              <div className="toolbar-end">
-                {me.role !== "viewer" && me.discordUserId !== "1133361505832800347" && <button className="text-add" onClick={() => { setEditingAnnouncement(null); setError(""); setModal("announcement"); }}><Plus size={17}/> ประกาศข่าว</button>}
-                {canWrite && <button className="text-add" onClick={() => { setError(""); setModal("update"); }}><Plus size={17}/> เพิ่มอัปเดต</button>}
-              </div>
+  const statusControl = (task: Task) => canMove(task)
+    ? <select className="status" aria-label="สถานะ" value={task.status} disabled={busy} onChange={(event) => void moveTask(task, event.target.value)}>{stages.map((stage) => <option key={stage}>{stage}</option>)}</select>
+    : <span className="cell">{task.status}</span>;
+
+  return <div>
+    <header className="bar"><div className="bar-inner">
+      <span className="brand">Totalwork</span>
+      <nav className="tabs" aria-label="เมนู">{tabs.map((item) => <a key={item.id} href={`#/${item.id}`} aria-current={section === item.id ? "page" : undefined}>{item.label}</a>)}</nav>
+      <div className="bar-end">
+        <button type="button" data-notice-trigger className="icon-btn" aria-label={`แจ้งเตือน ${unread}`} aria-expanded={noticesOpen} onClick={() => setNoticesOpen((value) => !value)}><Bell size={19}/>{unread > 0 && <span className="count">{unread}</span>}</button>
+        <details className="account"><summary aria-label="บัญชี"><Avatar name={me?.displayName || "?"} avatarUrl={me?.avatarUrl}/></summary><div className="menu"><strong>{me?.displayName}</strong><span className="muted">{me?.teamRole}</span><button className="link" onClick={logout}>ออกจากระบบ</button></div></details>
+      </div>
+    </div></header>
+
+    {noticesOpen && <div ref={noticesRef} className="panel" role="dialog" aria-label="แจ้งเตือน">
+      {notifications.length === 0 ? <p className="panel-empty">ไม่มีแจ้งเตือน</p> : notifications.map((notice) => <div key={notice.id} className={`panel-item ${notice.readAt ? "" : "unread"}`}>
+        <button className="panel-open" onClick={() => openNotice(notice)}><strong>{notice.title}</strong><span>{notice.body}</span><small>{shortDate(notice.createdAt)}</small></button>
+        {!notice.readAt && <button className="link" onClick={() => void markRead(notice)}>อ่านแล้ว</button>}
+      </div>)}
+    </div>}
+
+    <main className="page">
+      {!me ? (loading ? <p className="muted">กำลังโหลด…</p> : <button className="btn" onClick={() => void reload()}>โหลดใหม่</button>) : <>
+        {section === "tasks" && <>
+          <div className="toolbar">
+            <div className="toolbar-group">
+              <div className="seg"><button aria-pressed={!onlyMine} onClick={() => setOnlyMine(false)}>ทั้งหมด</button><button aria-pressed={onlyMine} onClick={() => setOnlyMine(true)}>ของฉัน</button></div>
+              <div className="seg"><button aria-pressed={taskView === "list"} onClick={() => setTaskView("list")}>รายการ</button><button aria-pressed={taskView === "board"} onClick={() => setTaskView("board")}>บอร์ด</button></div>
             </div>
-            <SectionTitle title="ข่าวสาร"/>
-            {newsLoading && announcements.length === 0 && <p className="news-load-error">กำลังโหลดข่าวสาร…</p>}
-            {newsLoadError && <p className="news-load-error">อ่านข่าวสารไม่สำเร็จ <button type="button" onClick={() => void reload()}>ลองใหม่</button></p>}
-            {!newsLoading && !newsLoadError && announcements.length === 0 && <p className="news-load-error">ยังไม่มีข่าวสาร</p>}
-            {announcements.length > 0 && <>
-              {announcements.map((item) => <AnnouncementCard
+            {canAssign && <button className="btn" onClick={() => open("task")}>งานใหม่</button>}
+          </div>
+          {visibleTasks.length === 0 ? <Empty label="ยังไม่มีงาน" actionLabel="งานใหม่" onAction={canAssign ? () => open("task") : undefined}/> : taskView === "list"
+            ? <div className="list">{visibleTasks.map((task) => <div key={task.id} className={`row row-task ${task.status === "เสร็จแล้ว" ? "done" : ""}`}>
+                <div className="cell-title"><button className="link" style={{ color: "inherit", fontWeight: "inherit", padding: 0, textAlign: "left", maxWidth: "100%", overflow: "hidden", textOverflow: "ellipsis" }} onClick={() => openTask(task)}>{task.title}</button>{task.reviewRequested && <span className="tag">ขอให้ช่วยดู</span>}</div>
+                <span className="cell"><Avatar name={name(task.assigneeDiscordId)} avatarUrl={avatar(task.assigneeDiscordId)} small/>{name(task.assigneeDiscordId)}</span>
+                <span className={`cell ${task.dueDate && task.dueDate < today && task.status !== "เสร็จแล้ว" ? "warn" : ""}`}>{shortDate(task.dueDate)}</span>
+                {statusControl(task)}
+              </div>)}</div>
+            : <div className="board">{stages.map((stage) => { const lane = visibleTasks.filter((task) => task.status === stage); return <section key={stage} className="lane"><h2>{stage}<span>{lane.length}</span></h2>{lane.map((task) => <button key={task.id} className="card" onClick={() => openTask(task)}>{task.title}<small>{name(task.assigneeDiscordId)}{task.dueDate ? ` · ${shortDate(task.dueDate)}` : ""}</small></button>)}</section>; })}</div>}
+        </>}
+
+        {section === "updates" && <>
+          <div className="toolbar">
+            <div className="seg"><button aria-pressed={feed === "updates"} onClick={() => setFeed("updates")}>อัปเดต</button><button aria-pressed={feed === "news"} onClick={() => setFeed("news")}>ประกาศ</button></div>
+            {feed === "updates" ? canWrite && <button className="btn" onClick={() => open("update")}>อัปเดตวันนี้</button> : canWrite && me.discordUserId !== PREVIEW_ID && <button className="btn" onClick={() => openAnnouncement(null)}>ประกาศใหม่</button>}
+          </div>
+          {feed === "updates" ? (updates.length === 0 ? <Empty label="ยังไม่มีอัปเดต" actionLabel="อัปเดตวันนี้" onAction={canWrite ? () => open("update") : undefined}/> : <div className="list">{updates.map((item) => <article className="entry" key={item.id}>
+              <div className="entry-head"><strong>{name(item.authorDiscordId)}</strong><time>{shortDate(item.workDate)}</time></div>
+              <MarkdownText text={item.today}/>
+              {item.blockers && <><p className="label">ติดขัด</p><MarkdownText text={item.blockers}/></>}
+              {item.tomorrow && <><p className="label">พรุ่งนี้</p><MarkdownText text={item.tomorrow}/></>}
+            </article>)}</div>)
+            : (announcements.length === 0 ? <Empty label="ไม่มีประกาศ" actionLabel="ประกาศใหม่" onAction={canWrite && me.discordUserId !== PREVIEW_ID ? () => openAnnouncement(null) : undefined}/> : <div className="list">{announcements.map((item) => <AnnouncementCard
                 key={item.id}
                 announcement={item}
                 comments={announcementComments.filter((comment) => comment.announcementId === item.id)}
                 currentUserId={me.discordUserId}
-                canComment={canWrite && me.discordUserId !== "1133361505832800347"}
+                canComment={canWrite && me.discordUserId !== PREVIEW_ID}
                 isAdmin={me.role === "admin"}
                 name={name}
                 onCommentAdded={(comment) => setAnnouncementComments((current) => [...current, comment])}
                 onCommentDeleted={(commentId) => setAnnouncementComments((current) => current.filter((comment) => comment.id !== commentId))}
-                onEditAnnouncement={openEditAnnouncement}
+                onEditAnnouncement={openAnnouncement}
                 onDeleteAnnouncement={deleteAnnouncement}
-              />)}
-            </>}
-            <SectionTitle title="บันทึกของทีม"/>
-            {updates.length === 0 ? <EmptyText>ยังไม่มีอัปเดต กด “เพิ่มอัปเดต” เพื่อบอกทีมว่าวันนี้ทำอะไร</EmptyText> : updates.map((item) => <article className="journal-row" key={item.id}><Avatar name={name(item.authorDiscordId)} avatarUrl={avatar(item.authorDiscordId)}/><div><div className="journal-title"><strong>{name(item.authorDiscordId)}</strong><time>{displayDate(item.workDate)}</time></div><MarkdownText text={item.today}/>{item.blockers && <div className="journal-meta"><b>ติดขัด</b><MarkdownText text={item.blockers}/></div>}{item.tomorrow && <div className="journal-meta"><b>พรุ่งนี้</b><MarkdownText text={item.tomorrow}/></div>}</div></article>)}
-          </>}
-          {section === "notifications" && <><div className="list-toolbar"><span>{unread} ยังไม่ได้อ่าน</span><span>{notifications.length} รายการทั้งหมด</span></div>{notifications.length === 0 ? <EmptyText>ยังไม่มีการแจ้งเตือน เมื่องานใหม่เข้ามาจะปรากฏที่นี่</EmptyText> : notifications.map((notice) => <article className={`notice-row ${notice.readAt ? "" : "unread"}`} key={notice.id}><span className="notice-dot"/><div><strong>{notice.title}</strong><p>{notice.body}</p><div className="notice-actions"><a href="#/tasks">ดูงาน</a>{!notice.readAt && <button onClick={() => void markRead(notice)}><Check size={15}/> อ่านแล้ว</button>}</div></div><time>{displayDate(notice.createdAt)}</time></article>)}</>}
-          {section === "team" && <><div className="list-toolbar"><span>{members.length} สมาชิก</span></div><div className="table-head people-columns"><span>ชื่อ</span><span>หน้าที่</span><span>สิทธิ์</span></div>{members.map((person) => <div className="table-row people-columns" key={person.discordUserId}><div className="person-cell"><Avatar name={person.displayName} avatarUrl={person.avatarUrl}/><span className="person-identity"><strong>{person.displayName}</strong>{person.discordUsername && <small>@{person.discordUsername}</small>}</span></div><span>{person.teamRole}</span><span className="role-text">{person.role}</span></div>)}</>}
+              />)}</div>)}
         </>}
-      </main>
-    </div>
-    <nav className="mobile-bar" aria-label="เมนูมือถือ">{navigation.map(({ id, label, Icon }) => id === "notifications" ? <button key={id} type="button" data-notice-trigger className={noticesOpen ? "selected" : ""} aria-label={label} aria-expanded={noticesOpen} onClick={() => setNoticesOpen((open) => !open)}><Icon size={20}/><small>{label}</small></button> : <a key={id} href={`#/${id}`} aria-label={label} aria-current={section === id ? "page" : undefined} className={section === id ? "selected" : ""}><Icon size={20}/><small>{label}</small></a>)}</nav>
-    {modal === "task" && <Modal title="มอบหมายงาน" error={error} onClose={() => setModal(null)}><p className="dialog-description">ผู้รับจะเห็นงานนี้พร้อมการแจ้งเตือนในเว็บ</p><form className="dialog-form" onSubmit={createTask}><label>ชื่องาน<input name="title" required maxLength={160} placeholder="งานที่ต้องทำ" autoFocus/></label><div className="form-pair"><label>มอบหมายให้<select name="assigneeDiscordId" required defaultValue=""><option value="" disabled>เลือกสมาชิก</option>{members.map((person) => <option key={person.discordUserId} value={person.discordUserId}>{person.displayName} · {person.teamRole}</option>)}</select></label><label>กำหนดส่ง<input name="dueDate" type="date"/></label></div><label>รายละเอียด<textarea name="description" maxLength={2000} rows={4} placeholder="ขอบเขตงานหรือสิ่งที่ต้องส่ง"/></label><label className="check-line"><input name="reviewRequested" type="checkbox"/><span>อยากให้คนนี้ช่วยดูเป็นพิเศษ</span></label><div className="dialog-actions"><button type="button" onClick={() => setModal(null)}>ยกเลิก</button><button className="submit-button" disabled={busy}>มอบหมายงาน</button></div></form></Modal>}
-    {modal === "issue" && <Modal title="รายงานปัญหา" error={error} onClose={() => setModal(null)}><form className="dialog-form" onSubmit={createIssue}><label>หัวข้อ<input name="title" required maxLength={160} placeholder="ปัญหาที่พบ" autoFocus/></label><div className="form-pair"><label>ผู้ดูแล<select name="ownerDiscordId" defaultValue=""><option value="">ยังไม่กำหนด</option>{members.map((person) => <option value={person.discordUserId} key={person.discordUserId}>{person.displayName}</option>)}</select></label><label>ความสำคัญ<select name="priority" defaultValue="ปกติ"><option>ต่ำ</option><option>ปกติ</option><option>สูง</option><option>ด่วน</option></select></label></div><label>รายละเอียด<textarea name="description" maxLength={2000} rows={4}/></label><div className="dialog-actions"><button type="button" onClick={() => setModal(null)}>ยกเลิก</button><button className="submit-button" disabled={busy}>บันทึกปัญหา</button></div></form></Modal>}
-    {modal === "update" && <Modal title="เพิ่มอัปเดต" error={error} onClose={() => setModal(null)}><form className="dialog-form" onSubmit={createUpdate}><label>วันนี้ทำอะไร<textarea name="today" required maxLength={2000} rows={4} autoFocus/></label><label>ติดขัดตรงไหน<textarea name="blockers" maxLength={2000} rows={3}/></label><label>พรุ่งนี้จะทำอะไร<textarea name="tomorrow" maxLength={2000} rows={3}/></label><div className="dialog-actions"><button type="button" onClick={() => setModal(null)}>ยกเลิก</button><button className="submit-button" disabled={busy}>บันทึกอัปเดต</button></div></form></Modal>}
-    {modal === "announcement" && <Modal title={editingAnnouncement ? "แก้ไขประกาศ" : "ประกาศข่าว"} error={error} onClose={() => setModal(null)}>
-      <form className="dialog-form" onSubmit={createAnnouncement}>
-        <label>หัวข้อข่าว<input name="title" required maxLength={160} defaultValue={editingAnnouncement?.title || ""} placeholder="เช่น สรุปประชุมทีม 13/10/2569" autoFocus/></label>
-        <label>ประชุมเรื่องอะไร (ถ้ามี)<input name="meetingTopic" maxLength={160} defaultValue={editingAnnouncement?.meetingTopic || ""} placeholder="เช่น กิจกรรมรอบซ้อม"/></label>
-        <label>รายละเอียดประกาศ<textarea name="body" required maxLength={2000} rows={5} defaultValue={editingAnnouncement?.body || ""} placeholder="ข้อความประกาศเดิม รองรับ Markdown และการขึ้นบรรทัดใหม่"/></label>
-        <label>Note เพิ่มเติม<textarea name="note" maxLength={2000} rows={3} defaultValue={editingAnnouncement?.note || ""} placeholder="บันทึกหรือข้อสังเกตเพิ่มเติม"/></label>
-        <label>ข้อมูลดิบต้นฉบับ <span className="field-note">{editingAnnouncement?.hasRawText ? "มีข้อมูลดิบแล้ว เว้นว่างเพื่อเก็บของเดิม" : "วางข้อความดิบตรงนี้ ข้อมูลจะไม่แสดงบนหน้าข่าว"}</span><textarea name="rawText" rows={5} placeholder="วางข้อความดิบจากการประชุมหรือบันทึกต้นฉบับ"/></label>
-        <label>หรือเพิ่มจากไฟล์ .txt <span className="field-note">ถ้าเลือกไฟล์ จะใช้เนื้อหาไฟล์แทนข้อความในช่องข้อมูลดิบ</span><input name="rawFile" type="file" accept=".txt,text/plain"/></label>
-        <div className="dialog-actions"><button type="button" onClick={() => setModal(null)}>ยกเลิก</button><button className="submit-button" disabled={busy}>{editingAnnouncement ? "บันทึกการแก้ไข" : "ประกาศข่าว"}</button></div>
-      </form>
-    </Modal>}
-    {modal === "issue-detail" && detailIssue && <Modal title="รายละเอียดปัญหา" error={error} onClose={() => setModal(null)}><div className="detail-content"><span className="detail-id">{detailIssue.id}</span><h3>{detailIssue.title}</h3><MarkdownText text={detailIssue.description || "ไม่มีรายละเอียดเพิ่มเติม"}/><dl><div><dt>ผู้รายงาน</dt><dd>{name(detailIssue.reporterDiscordId)}</dd></div><div><dt>ผู้ดูแล</dt><dd>{detailIssue.ownerDiscordId ? name(detailIssue.ownerDiscordId) : "ยังไม่กำหนด"}</dd></div><div><dt>ความสำคัญ</dt><dd>{detailIssue.priority}</dd></div><div><dt>สถานะ</dt><dd>{detailIssue.status}</dd></div><div><dt>วันที่แจ้ง</dt><dd>{displayDate(detailIssue.createdAt)}</dd></div></dl>{(me?.role === "admin" || me?.role === "lead" || me?.discordUserId === detailIssue.reporterDiscordId || me?.discordUserId === detailIssue.ownerDiscordId) && <div className="detail-status"><span>จัดการปัญหา</span><div><button disabled={busy || detailIssue.status === "แก้แล้ว"} onClick={() => void changeIssueStatus(detailIssue, "แก้แล้ว")}>แก้แล้ว</button><button disabled={busy || detailIssue.status === "เปิด"} onClick={() => void changeIssueStatus(detailIssue, "เปิด")}>เปิดอีกครั้ง</button></div></div>}{detailIssue.reporterDiscordId === me?.discordUserId && <div className="detail-delete"><button type="button" disabled={busy} onClick={() => void deleteIssue(detailIssue)}><Trash2 size={15}/> ลบปัญหานี้</button></div>}</div></Modal>}
-    {modal === "task-detail" && detailTask && <Modal title="รายละเอียดงาน" error={error} onClose={() => setModal(null)}><div className="detail-content"><span className="detail-id">{detailTask.id}</span><h3>{detailTask.title}</h3><MarkdownText text={detailTask.description || "ไม่มีรายละเอียดเพิ่มเติม"}/><dl><div><dt>ผู้รับงาน</dt><dd>{name(detailTask.assigneeDiscordId)}</dd></div><div><dt>กำหนดส่ง</dt><dd>{displayDate(detailTask.dueDate)}</dd></div><div><dt>สถานะ</dt><dd>{detailTask.status}</dd></div>{detailTask.reviewRequested && <div><dt>คำขอ</dt><dd>อยากให้ช่วยดูงานนี้</dd></div>}</dl>{canMove(detailTask) && <div className="detail-status"><span>เปลี่ยนสถานะ</span><div>{stages.map((stage) => <button key={stage} className={stage === detailTask.status ? "active" : ""} disabled={busy || stage === detailTask.status} onClick={() => void moveTask(detailTask, stage)}>{stage}</button>)}</div></div>}{detailTask.createdByDiscordId === me?.discordUserId && <div className="detail-delete"><button type="button" disabled={busy} onClick={() => void deleteTask(detailTask)}><Trash2 size={15}/> ลบงานนี้</button></div>}</div></Modal>}
-  </div>;
-}
 
-function stageClass(status: string) { return status === "เสร็จแล้ว" ? "done" : status === "รอตรวจ" ? "review" : status === "กำลังทำ" ? "doing" : "next"; }
-function EmptyText({ children }: { children: ReactNode }) { return <p className="empty-text">{children}</p>; }
-function SectionTitle({ title, action }: { title: string; action?: ReactNode }) { return <div className="section-title"><h2>{title}</h2>{action}</div>; }
-function TaskTable({ tasks, name, avatar, canMove, busy, onDetail, onMove }: { tasks: Task[]; name: (id: string) => string; avatar: (id: string) => string | undefined; canMove: (task: Task) => boolean; busy: boolean; onDetail: (task: Task) => void; onMove: (task: Task, status: string) => Promise<void> }) {
-  return <div className="task-table"><div className="table-head task-columns"><span>งาน</span><span>ผู้รับงาน</span><span>กำหนดส่ง</span><span>สถานะ</span><span className="sr-only">ตัวเลือก</span></div>{tasks.length === 0 ? <EmptyText>ยังไม่มีงานในพื้นที่นี้</EmptyText> : tasks.map((task, index) => <div className="table-row task-columns" key={task.id}><div className="task-cell"><span className="row-number">{String(index + 1).padStart(2, "0")}</span><div><button className="row-title" onClick={() => onDetail(task)}>{task.title}</button>{task.reviewRequested && <span className="review-note">ขอให้ช่วยดู</span>}<small>{task.description || task.id}</small></div></div><span className="owner-cell"><Avatar name={name(task.assigneeDiscordId)} avatarUrl={avatar(task.assigneeDiscordId)} small/>{name(task.assigneeDiscordId)}</span><time>{displayDate(task.dueDate)}</time><span className="stage-cell"><i className={`stage-dot ${stageClass(task.status)}`}/>{task.status}</span><details className="row-menu"><summary aria-label={`ตัวเลือกของงาน ${task.title}`} title="ตัวเลือก"><Ellipsis size={18}/></summary><div className="row-popover"><button onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); onDetail(task); }}>ดูรายละเอียด <ChevronRight size={14}/></button>{canMove(task) && <div className="popover-status"><span>เปลี่ยนสถานะ <ChevronDown size={13}/></span>{stages.filter((stage) => stage !== task.status).map((stage) => <button key={stage} disabled={busy} onClick={(event) => { event.currentTarget.closest("details")?.removeAttribute("open"); void onMove(task, stage); }}>{stage}</button>)}</div>}</div></details></div>)}</div>;
+        {section === "issues" && <>
+          <div className="toolbar">
+            <div className="seg"><button aria-pressed={issueFilter === "open"} onClick={() => setIssueFilter("open")}>เปิดอยู่</button><button aria-pressed={issueFilter === "all"} onClick={() => setIssueFilter("all")}>ทั้งหมด</button></div>
+            {canWrite && <button className="btn" onClick={() => open("issue")}>แจ้งปัญหา</button>}
+          </div>
+          {visibleIssues.length === 0 ? <Empty label="ไม่มีปัญหา" actionLabel="แจ้งปัญหา" onAction={canWrite ? () => open("issue") : undefined}/> : <div className="list">{visibleIssues.map((issue) => <button key={issue.id} className={`row row-issue ${issue.status === "แก้แล้ว" ? "done" : ""}`} onClick={() => openIssue(issue)}>
+            <span className="cell-title">{issue.title}</span>
+            <span className="cell">{issue.ownerDiscordId ? name(issue.ownerDiscordId) : "-"}</span>
+            <span className={`cell ${issue.priority === "ด่วน" || issue.priority === "สูง" ? "warn" : ""}`}>{issue.priority}</span>
+            <span className="cell">{issue.status}</span>
+          </button>)}</div>}
+        </>}
+
+        {section === "team" && <>
+          <div className="list">{members.map((item) => { const days = lastUpdateDays(item.discordUserId); return <div key={item.discordUserId} className="row row-person">
+            <span className="cell" style={{ color: "var(--ink)" }}><Avatar name={item.displayName} avatarUrl={item.avatarUrl}/><span><strong style={{ fontWeight: 500 }}>{item.displayName}</strong><br/><span className="muted" style={{ fontSize: 13 }}>{item.teamRole}</span></span></span>
+            <span className="cell">{item.role}</span>
+            {isManager && item.role !== "viewer" ? <span className={`cell ${days === null || days >= 2 ? "warn" : ""}`}>{days === null ? "ยังไม่เคยอัปเดต" : days === 0 ? "อัปเดตวันนี้" : `${days} วันก่อน`}</span> : <span/>}
+          </div>; })}</div>
+          {me.discordUserId !== PREVIEW_ID && <form className="form" style={{ marginTop: 32, maxWidth: 420 }} onSubmit={saveGoogleEmail}>
+            <label>อีเมล Google สำหรับปฏิทิน (ไม่บังคับ)<input name="email" type="email" maxLength={254} defaultValue={me.googleEmail || ""} placeholder="name@gmail.com"/></label>
+            <p className="muted" style={{ margin: 0, fontSize: 13 }}>ใช้แชร์ปฏิทินงานของคุณเท่านั้น คนอื่นไม่เห็น</p>
+            <div className="actions" style={{ justifyContent: "flex-start" }}><button className="btn" disabled={busy}>บันทึก</button></div>
+          </form>}
+        </>}
+      </>}
+    </main>
+
+    {error && !modal && <div className="toast bad" role="alert">{error}<button onClick={() => setError("")} aria-label="ปิด"><X size={14}/></button></div>}
+    {message && <div className="toast" role="status">{message}</div>}
+
+    {modal === "task" && <Modal title="งานใหม่" error={error} onClose={() => setModal(null)}><form className="form" onSubmit={createTask}>
+      <label>ชื่องาน<input name="title" required maxLength={160} autoFocus/></label>
+      <div className="pair"><label>ผู้รับงาน<select name="assigneeDiscordId" required defaultValue=""><option value="" disabled>เลือก</option>{members.map((item) => <option key={item.discordUserId} value={item.discordUserId}>{item.displayName}</option>)}</select></label><label>กำหนดส่ง<input name="dueDate" type="date"/></label></div>
+      <label>รายละเอียด<textarea name="description" maxLength={2000} rows={3}/></label>
+      <label className="check"><input name="reviewRequested" type="checkbox"/>ขอให้ช่วยดู</label>
+      <Actions onCancel={() => setModal(null)} submit="สร้าง" busy={busy}/>
+    </form></Modal>}
+
+    {modal === "issue" && <Modal title="แจ้งปัญหา" error={error} onClose={() => setModal(null)}><form className="form" onSubmit={createIssue}>
+      <label>หัวข้อ<input name="title" required maxLength={160} autoFocus/></label>
+      <div className="pair"><label>ผู้ดูแล<select name="ownerDiscordId" defaultValue=""><option value="">ไม่ระบุ</option>{members.map((item) => <option value={item.discordUserId} key={item.discordUserId}>{item.displayName}</option>)}</select></label><label>ความสำคัญ<select name="priority" defaultValue="ปกติ"><option>ต่ำ</option><option>ปกติ</option><option>สูง</option><option>ด่วน</option></select></label></div>
+      <label>รายละเอียด<textarea name="description" maxLength={2000} rows={3}/></label>
+      <Actions onCancel={() => setModal(null)} submit="บันทึก" busy={busy}/>
+    </form></Modal>}
+
+    {modal === "update" && <Modal title="อัปเดตวันนี้" error={error} onClose={() => setModal(null)}><form className="form" onSubmit={createUpdate}>
+      <label>วันนี้ทำอะไร<textarea name="today" required maxLength={2000} rows={3} autoFocus/></label>
+      <label>ติดขัดอะไรไหม<textarea name="blockers" maxLength={2000} rows={2}/></label>
+      <label>พรุ่งนี้ทำอะไร<textarea name="tomorrow" maxLength={2000} rows={2}/></label>
+      <Actions onCancel={() => setModal(null)} submit="บันทึก" busy={busy}/>
+    </form></Modal>}
+
+    {modal === "announcement" && <Modal title={editingAnnouncement ? "แก้ประกาศ" : "ประกาศใหม่"} error={error} onClose={() => setModal(null)}><form className="form" onSubmit={saveAnnouncement}>
+      <label>หัวข้อ<input name="title" required maxLength={160} defaultValue={editingAnnouncement?.title || ""} autoFocus/></label>
+      <label>เรื่องที่ประชุม<input name="meetingTopic" maxLength={160} defaultValue={editingAnnouncement?.meetingTopic || ""}/></label>
+      <label>รายละเอียด<textarea name="body" required maxLength={2000} rows={4} defaultValue={editingAnnouncement?.body || ""}/></label>
+      <label>Note<textarea name="note" maxLength={2000} rows={2} defaultValue={editingAnnouncement?.note || ""}/></label>
+      <label>ข้อความดิบ{editingAnnouncement?.hasRawText ? " (เว้นว่างเพื่อเก็บของเดิม)" : ""}<textarea name="rawText" rows={3}/></label>
+      <label>หรือไฟล์ .txt<input name="rawFile" type="file" accept=".txt,text/plain"/></label>
+      <Actions onCancel={() => setModal(null)} submit="บันทึก" busy={busy}/>
+    </form></Modal>}
+
+    {modal === "issue-detail" && detailIssue && <Modal title="ปัญหา" error={error} onClose={() => setModal(null)}><div className="detail">
+      <h3>{detailIssue.title}</h3>
+      {detailIssue.description && <MarkdownText text={detailIssue.description}/>}
+      <dl>
+        <div><dt>ผู้แจ้ง</dt><dd>{name(detailIssue.reporterDiscordId)}</dd></div>
+        <div><dt>ผู้ดูแล</dt><dd>{detailIssue.ownerDiscordId ? name(detailIssue.ownerDiscordId) : "-"}</dd></div>
+        <div><dt>ความสำคัญ</dt><dd>{detailIssue.priority}</dd></div>
+        <div><dt>สถานะ</dt><dd>{detailIssue.status}</dd></div>
+        <div><dt>วันที่</dt><dd>{shortDate(detailIssue.createdAt)}</dd></div>
+      </dl>
+      <div className="actions" style={{ justifyContent: "space-between" }}>
+        {detailIssue.reporterDiscordId === me?.discordUserId ? <button className="link danger" disabled={busy} onClick={() => void deleteIssue(detailIssue)}>ลบ</button> : <span/>}
+        {(isManager || me?.discordUserId === detailIssue.reporterDiscordId || me?.discordUserId === detailIssue.ownerDiscordId) && (detailIssue.status === "แก้แล้ว"
+          ? <button className="btn" disabled={busy} onClick={() => void changeIssueStatus(detailIssue, "เปิด")}>เปิดอีกครั้ง</button>
+          : <button className="btn" disabled={busy} onClick={() => void changeIssueStatus(detailIssue, "แก้แล้ว")}>แก้แล้ว</button>)}
+      </div>
+    </div></Modal>}
+
+    {modal === "task-detail" && detailTask && <Modal title="งาน" error={error} onClose={() => setModal(null)}><div className="detail">
+      <h3>{detailTask.title}</h3>
+      {detailTask.description && <MarkdownText text={detailTask.description}/>}
+      <dl>
+        <div><dt>ผู้รับงาน</dt><dd>{name(detailTask.assigneeDiscordId)}</dd></div>
+        <div><dt>กำหนดส่ง</dt><dd>{detailTask.dueDate ? shortDate(detailTask.dueDate) : "-"}</dd></div>
+        <div><dt>สถานะ</dt><dd>{statusControl(detailTask)}</dd></div>
+        {detailTask.reviewRequested && <div><dt>ขอให้ช่วยดู</dt><dd>ใช่</dd></div>}
+      </dl>
+      {detailTask.createdByDiscordId === me?.discordUserId && <div className="actions" style={{ justifyContent: "flex-start" }}><button className="link danger" disabled={busy} onClick={() => void deleteTask(detailTask)}>ลบงาน</button></div>}
+    </div></Modal>}
+  </div>;
 }

@@ -1,3 +1,5 @@
+import { bangkokDate } from "./helpers";
+
 export interface Env {
   AUTH_SECRET: string;
   AUTH_DISCORD_ID: string;
@@ -6,9 +8,12 @@ export interface Env {
   GOOGLE_SHEET_ID: string;
   GOOGLE_SERVICE_ACCOUNT_EMAIL: string;
   GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY: string;
+  DISCORD_WEBHOOK_URL?: string;
+  CALENDAR_SYNC_ENABLED?: string;
+  REMINDERS_ENABLED?: string;
 }
 
-export type Member = { discordUserId: string; displayName: string; role: "admin" | "lead" | "member" | "viewer"; active: boolean; teamRole: string; discordName?: string; discordUsername?: string; avatarUrl?: string };
+export type Member = { discordUserId: string; displayName: string; role: "admin" | "lead" | "member" | "viewer"; active: boolean; teamRole: string; googleEmail?: string; discordName?: string; discordUsername?: string; avatarUrl?: string };
 export type Task = { id: string; title: string; description: string; assigneeDiscordId: string; status: string; dueDate: string; updatedAt: string; reviewRequested: boolean; createdByDiscordId: string; createdAt: string; row: number };
 export type Notification = { id: string; recipientDiscordId: string; taskId: string; type: string; title: string; body: string; createdAt: string; readAt: string; row: number };
 export type Issue = { id: string; title: string; description: string; reporterDiscordId: string; ownerDiscordId: string; priority: string; status: string; createdAt: string; row: number };
@@ -19,33 +24,36 @@ export type AnnouncementComment = { id: string; announcementId: string; authorDi
 const bytes = (value: string) => new TextEncoder().encode(value);
 const b64 = (value: Uint8Array) => btoa(String.fromCharCode(...value)).replaceAll("+", "-").replaceAll("/", "_").replaceAll("=", "");
 const encode = (value: unknown) => b64(bytes(JSON.stringify(value)));
-let cached: { key: string; value: string; expires: number } | undefined;
-let pendingToken: { key: string; promise: Promise<string> } | undefined;
+const SHEETS_SCOPE = "https://www.googleapis.com/auth/spreadsheets";
+const tokenCache = new Map<string, { value: string; expires: number }>();
+const pendingTokens = new Map<string, Promise<string>>();
 const commentSheetSetup = new Map<string, Promise<void>>();
 
 export function sheets(env: Env) {
-  async function accessToken() {
-    const cacheKey = `${env.GOOGLE_SERVICE_ACCOUNT_EMAIL}:${env.GOOGLE_SHEET_ID}`;
-    if (cached?.key === cacheKey && cached.expires > Date.now() + 60_000) return cached.value;
-    if (pendingToken?.key === cacheKey) return pendingToken.promise;
-    const promise = requestAccessToken(cacheKey);
-    pendingToken = { key: cacheKey, promise };
+  async function accessToken(scope = SHEETS_SCOPE) {
+    const cacheKey = `${env.GOOGLE_SERVICE_ACCOUNT_EMAIL}:${scope}`;
+    const hit = tokenCache.get(cacheKey);
+    if (hit && hit.expires > Date.now() + 60_000) return hit.value;
+    const pending = pendingTokens.get(cacheKey);
+    if (pending) return pending;
+    const promise = requestAccessToken(cacheKey, scope);
+    pendingTokens.set(cacheKey, promise);
     try { return await promise; }
-    finally { if (pendingToken?.promise === promise) pendingToken = undefined; }
+    finally { if (pendingTokens.get(cacheKey) === promise) pendingTokens.delete(cacheKey); }
   }
-  async function requestAccessToken(cacheKey: string) {
+  async function requestAccessToken(cacheKey: string, scope: string) {
     const pem = env.GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY?.replaceAll("\\n", "\n");
     if (!env.GOOGLE_SERVICE_ACCOUNT_EMAIL || !pem) throw new Error("Google credentials missing");
     const der = Uint8Array.from(atob(pem.replace(/-----[^-]+-----|\s/g, "")), (char) => char.charCodeAt(0));
     const key = await crypto.subtle.importKey("pkcs8", der, { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" }, false, ["sign"]);
     const now = Math.floor(Date.now() / 1000);
-    const unsigned = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iss: env.GOOGLE_SERVICE_ACCOUNT_EMAIL, scope: "https://www.googleapis.com/auth/spreadsheets", aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 })}`;
+    const unsigned = `${encode({ alg: "RS256", typ: "JWT" })}.${encode({ iss: env.GOOGLE_SERVICE_ACCOUNT_EMAIL, scope, aud: "https://oauth2.googleapis.com/token", iat: now, exp: now + 3600 })}`;
     const signature = b64(new Uint8Array(await crypto.subtle.sign("RSASSA-PKCS1-v1_5", key, bytes(unsigned))));
     const response = await fetch("https://oauth2.googleapis.com/token", { method: "POST", headers: { "content-type": "application/x-www-form-urlencoded" }, body: new URLSearchParams({ grant_type: "urn:ietf:params:oauth:grant-type:jwt-bearer", assertion: `${unsigned}.${signature}` }) });
     if (!response.ok) throw new Error(`Google OAuth failed (${response.status})`);
     const result = await response.json() as { access_token: string; expires_in?: number };
-    cached = { key: cacheKey, value: result.access_token, expires: Date.now() + (result.expires_in ?? 3600) * 1000 };
-    return cached.value;
+    tokenCache.set(cacheKey, { value: result.access_token, expires: Date.now() + (result.expires_in ?? 3600) * 1000 });
+    return result.access_token;
   }
   async function call(path: string, init?: RequestInit) {
     const response = await fetch(`https://sheets.googleapis.com/v4/spreadsheets/${env.GOOGLE_SHEET_ID}${path}`, { ...init, headers: { authorization: `Bearer ${await accessToken()}`, "content-type": "application/json", ...init?.headers } });
@@ -78,7 +86,7 @@ export function sheets(env: Env) {
     await setup;
   }
   async function members(): Promise<Member[]> {
-    return (await rows("Members")).slice(1).filter((r) => r[0]).map((r) => ({ discordUserId: r[0], displayName: r[1] || r[0], role: (["admin", "lead", "member", "viewer"].includes(r[2]) ? r[2] : "viewer") as Member["role"], active: r[3]?.toLowerCase() === "true", teamRole: r[5] || "สมาชิกทีม" }));
+    return (await rows("Members")).slice(1).filter((r) => r[0]).map((r) => ({ discordUserId: r[0], displayName: r[1] || r[0], role: (["admin", "lead", "member", "viewer"].includes(r[2]) ? r[2] : "viewer") as Member["role"], active: r[3]?.toLowerCase() === "true", teamRole: r[5] || "สมาชิกทีม", googleEmail: r[6] || "" }));
   }
   async function tasks(): Promise<Task[]> {
     return (await rows("Tasks")).slice(1).map((r, i) => ({ id: r[0] || "", title: r[1] || "ไม่มีชื่อ", description: r[2] || "", assigneeDiscordId: r[3] || "", status: r[4] || "ถัดไป", dueDate: r[5] || "", updatedAt: r[6] || "", reviewRequested: r[7]?.toLowerCase() === "true", createdByDiscordId: r[8] || "", createdAt: r[9] || "", row: i + 2 })).filter((t) => t.id);
@@ -123,7 +131,7 @@ export function sheets(env: Env) {
   async function createUpdate(input: { authorDiscordId: string; today: string; blockers: string; tomorrow: string }) {
     const id = `UPDATE-${crypto.randomUUID().slice(0, 8).toUpperCase()}`;
     const now = new Date().toISOString();
-    await call(`/values/${encodeURIComponent("'Updates'!A:G")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[id, input.authorDiscordId, now.slice(0, 10), input.today, input.blockers, input.tomorrow, now]] }) });
+    await call(`/values/${encodeURIComponent("'Updates'!A:G")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[id, input.authorDiscordId, bangkokDate(new Date(now)), input.today, input.blockers, input.tomorrow, now]] }) });
     return { id };
   }
   async function createIssue(input: { title: string; description: string; reporterDiscordId: string; ownerDiscordId: string; priority: string }) {
@@ -198,5 +206,55 @@ export function sheets(env: Env) {
     const range = `'Notifications'!H${row}`;
     await call(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ range, values: [[new Date().toISOString()]] }) });
   }
-  return { members, tasks, notifications, issues, updates, announcements, announcementRawText, announcementComments, createTask, createUpdate, createIssue, createAnnouncement, updateAnnouncement, createAnnouncementComment, updateIssueStatus, deleteIssue, deleteAnnouncement, deleteAnnouncementComment, deleteTask, updateTaskStatus, markNotificationRead };
+  const tabSetup = new Map<string, Promise<void>>();
+  async function ensureTab(tab: string, header: string[]) {
+    const key = `${env.GOOGLE_SHEET_ID}:${tab}`;
+    let setup = tabSetup.get(key);
+    if (!setup) {
+      setup = (async () => {
+        const metadata = await call("?fields=sheets(properties(title))") as { sheets?: { properties?: { title?: string } }[] };
+        if (!metadata.sheets?.some((sheet) => sheet.properties?.title === tab)) {
+          try { await call(":batchUpdate", { method: "POST", body: JSON.stringify({ requests: [{ addSheet: { properties: { title: tab } } }] }) }); }
+          catch (failure) {
+            const latest = await call("?fields=sheets(properties(title))") as { sheets?: { properties?: { title?: string } }[] };
+            if (!latest.sheets?.some((sheet) => sheet.properties?.title === tab)) throw failure;
+          }
+        }
+        const range = `'${tab}'!A1:${String.fromCharCode(64 + header.length)}1`;
+        const current = await call(`/values/${encodeURIComponent(range)}`) as { values?: string[][] };
+        if (current.values?.[0]?.[0] !== header[0]) await call(`/values/${encodeURIComponent(range)}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ range, values: [header] }) });
+      })().catch((failure) => { tabSetup.delete(key); throw failure; });
+      tabSetup.set(key, setup);
+    }
+    await setup;
+  }
+  async function setMemberGoogleEmail(discordUserId: string, email: string) {
+    const all = await rows("Members");
+    const index = all.findIndex((r, i) => i > 0 && r[0] === discordUserId);
+    if (index < 0) throw new Error("Member not found");
+    await call("/values:batchUpdate", { method: "POST", body: JSON.stringify({ valueInputOption: "RAW", data: [{ range: "'Members'!G1", values: [["google_email"]] }, { range: `'Members'!G${index + 1}`, values: [[email]] }] }) });
+  }
+  const calendarHeader = ["key", "calendar_id", "google_email", "shared_at"];
+  // readOnly: never create the tab (used by dry runs); a missing tab simply reads as empty.
+  async function calendarRegistry(readOnly = false): Promise<{ key: string; calendarId: string; googleEmail: string; sharedAt: string; row: number }[]> {
+    if (!readOnly) await ensureTab("Calendars", calendarHeader);
+    const tabRows = readOnly ? await rows("Calendars", "D").catch(() => [] as string[][]) : await rows("Calendars", "D");
+    return tabRows.slice(1).map((r, i) => ({ key: r[0] || "", calendarId: r[1] || "", googleEmail: r[2] || "", sharedAt: r[3] || "", row: i + 2 })).filter((entry) => entry.key && entry.calendarId);
+  }
+  async function saveCalendarEntry(entry: { key: string; calendarId: string; googleEmail: string; sharedAt: string }, row?: number) {
+    await ensureTab("Calendars", calendarHeader);
+    const values = [[entry.key, entry.calendarId, entry.googleEmail, entry.sharedAt]];
+    if (row) await call(`/values/${encodeURIComponent(`'Calendars'!A${row}:D${row}`)}?valueInputOption=RAW`, { method: "PUT", body: JSON.stringify({ range: `'Calendars'!A${row}:D${row}`, values }) });
+    else await call(`/values/${encodeURIComponent("'Calendars'!A:D")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values }) });
+  }
+  async function reminderKeys(readOnly = false): Promise<Set<string>> {
+    if (!readOnly) await ensureTab("ReminderLog", ["key", "sent_at"]);
+    const tabRows = readOnly ? await rows("ReminderLog", "B").catch(() => [] as string[][]) : await rows("ReminderLog", "B");
+    return new Set(tabRows.slice(1).map((r) => r[0]).filter(Boolean));
+  }
+  async function logReminder(key: string) {
+    await ensureTab("ReminderLog", ["key", "sent_at"]);
+    await call(`/values/${encodeURIComponent("'ReminderLog'!A:B")}:append?valueInputOption=RAW&insertDataOption=INSERT_ROWS`, { method: "POST", body: JSON.stringify({ values: [[key, new Date().toISOString()]] }) });
+  }
+  return { accessToken, setMemberGoogleEmail, calendarRegistry, saveCalendarEntry, reminderKeys, logReminder, members, tasks, notifications, issues, updates, announcements, announcementRawText, announcementComments, createTask, createUpdate, createIssue, createAnnouncement, updateAnnouncement, createAnnouncementComment, updateIssueStatus, deleteIssue, deleteAnnouncement, deleteAnnouncementComment, deleteTask, updateTaskStatus, markNotificationRead };
 }

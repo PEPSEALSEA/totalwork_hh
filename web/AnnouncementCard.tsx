@@ -1,5 +1,4 @@
 import { useState, type FormEvent } from "react";
-import { FileDown, Pencil, Send, Trash2 } from "lucide-react";
 import { api } from "./api";
 import { MarkdownText } from "./MarkdownText";
 
@@ -29,6 +28,7 @@ export function AnnouncementCard({ announcement, comments, currentUserId, canCom
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [downloading, setDownloading] = useState(false);
+  const mine = announcement.authorDiscordId === currentUserId;
 
   async function submitComment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -39,17 +39,17 @@ export function AnnouncementCard({ announcement, comments, currentUserId, canCom
       const { comment } = await api<{ comment: AnnouncementComment }>(`/api/announcements/${encodeURIComponent(announcement.id)}/comments`, { method: "POST", body: JSON.stringify({ body }) });
       onCommentAdded(comment);
       setDraft("");
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "ส่งคอมเมนต์ไม่สำเร็จ"); }
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "ส่งไม่สำเร็จ"); }
     finally { setSaving(false); }
   }
 
   async function deleteComment(comment: AnnouncementComment) {
-    if (!window.confirm("ลบคอมเมนต์นี้?")) return;
+    if (!window.confirm("ลบความเห็นนี้?")) return;
     setSaving(true); setError("");
     try {
       await api(`/api/announcements/${encodeURIComponent(announcement.id)}/comments/${encodeURIComponent(comment.id)}`, { method: "DELETE" });
       onCommentDeleted(comment.id);
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "ลบคอมเมนต์ไม่สำเร็จ"); }
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "ลบไม่สำเร็จ"); }
     finally { setSaving(false); }
   }
 
@@ -65,30 +65,29 @@ export function AnnouncementCard({ announcement, comments, currentUserId, canCom
       link.click();
       link.remove();
       window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    } catch (failure) { setError(failure instanceof Error ? failure.message : "ดาวน์โหลดข้อมูลดิบไม่สำเร็จ"); }
+    } catch (failure) { setError(failure instanceof Error ? failure.message : "ดาวน์โหลดไม่สำเร็จ"); }
     finally { setDownloading(false); }
   }
 
-  return <article className="announcement-card">
-    <div className="announcement-heading">
-      <div><h3>{announcement.title}</h3>{announcement.meetingTopic && <p className="meeting-topic">ประชุมเรื่อง: {announcement.meetingTopic}</p>}<span className="announcement-author">โดย {name(announcement.authorDiscordId)} · {dateTime(announcement.publishedAt)}</span></div>
-      <div className="announcement-tools">
-        {announcement.hasRawText && <button type="button" disabled={downloading} title="ดาวน์โหลดข้อมูลดิบ .txt" aria-label={`ดาวน์โหลดข้อมูลดิบของ ${announcement.title}`} onClick={() => void downloadRawText()}><FileDown size={17}/></button>}
-        {announcement.authorDiscordId === currentUserId && <button type="button" title="แก้ไขประกาศ" aria-label={`แก้ไขประกาศ ${announcement.title}`} onClick={() => onEditAnnouncement(announcement)}><Pencil size={15}/></button>}
-        {announcement.authorDiscordId === currentUserId && <button type="button" title="ลบประกาศ" aria-label={`ลบประกาศ ${announcement.title}`} onClick={() => void onDeleteAnnouncement(announcement)}><Trash2 size={16}/></button>}
+  return <article className="entry">
+    <div className="entry-head">
+      <strong>{announcement.title}</strong>
+      <div className="tools">
+        {announcement.hasRawText && <button type="button" className="link" disabled={downloading} onClick={() => void downloadRawText()}>ไฟล์ดิบ</button>}
+        {mine && <button type="button" className="link" onClick={() => onEditAnnouncement(announcement)}>แก้ไข</button>}
+        {mine && <button type="button" className="link danger" onClick={() => void onDeleteAnnouncement(announcement)}>ลบ</button>}
       </div>
     </div>
+    <small>{name(announcement.authorDiscordId)} · {dateTime(announcement.publishedAt)}{announcement.meetingTopic ? ` · ${announcement.meetingTopic}` : ""}</small>
     <MarkdownText text={announcement.body}/>
-    {announcement.note && <div className="announcement-note"><strong>Note</strong><MarkdownText text={announcement.note}/></div>}
-    <section className="announcement-comments" aria-label={`คอมเมนต์ของ ${announcement.title}`}>
-      <h4>คอมเมนต์ <span>{comments.length}</span></h4>
-      {comments.length === 0 && <p className="comment-empty">ยังไม่มีคอมเมนต์</p>}
-      {comments.map((comment) => <div className="comment-row" key={comment.id}>
-        <div className="comment-top"><strong>{comment.authorName || name(comment.authorDiscordId)}</strong><time dateTime={comment.createdAt}>{dateTime(comment.createdAt)}</time>{(comment.authorDiscordId === currentUserId || isAdmin) && <button type="button" disabled={saving} onClick={() => void deleteComment(comment)} aria-label={`ลบคอมเมนต์ของ ${comment.authorName || name(comment.authorDiscordId)}`}><Trash2 size={13}/></button>}</div>
+    {announcement.note && <div className="note"><MarkdownText text={announcement.note}/></div>}
+    <section className="comments" aria-label="ความเห็น">
+      {comments.map((comment) => <div className="comment" key={comment.id}>
+        <div className="comment-top"><strong>{comment.authorName || name(comment.authorDiscordId)}</strong><time dateTime={comment.createdAt}>{dateTime(comment.createdAt)}</time>{(comment.authorDiscordId === currentUserId || isAdmin) && <button type="button" className="link danger" disabled={saving} onClick={() => void deleteComment(comment)}>ลบ</button>}</div>
         <MarkdownText text={comment.body}/>
       </div>)}
-      {canComment && <form className="comment-form" onSubmit={submitComment}><label className="sr-only" htmlFor={`comment-${announcement.id}`}>เขียนคอมเมนต์สำหรับ {announcement.title}</label><textarea id={`comment-${announcement.id}`} value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={2000} rows={2} placeholder="เขียนคอมเมนต์หรือแชร์ข้อมูลเพิ่มเติม…"/><button type="submit" disabled={saving || !draft.trim()}><Send size={14}/> ส่งคอมเมนต์</button></form>}
-      {error && <p className="comment-error" role="alert">{error}</p>}
+      {canComment && <form className="comment-form" onSubmit={submitComment}><label className="sr-only" htmlFor={`comment-${announcement.id}`}>ความเห็น</label><textarea id={`comment-${announcement.id}`} value={draft} onChange={(event) => setDraft(event.target.value)} maxLength={2000} rows={2} placeholder="ความเห็น"/><button type="submit" className="btn" disabled={saving || !draft.trim()}>ส่ง</button></form>}
+      {error && <p className="form-error" role="alert">{error}</p>}
     </section>
   </article>;
 }

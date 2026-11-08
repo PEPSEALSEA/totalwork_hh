@@ -15,5 +15,12 @@
       "GOOGLE_SERVICE_ACCOUNT_PRIVATE_KEY"
     ]
   },
+  "vars": {
+    "CALENDAR_SYNC_ENABLED": "false",
+    "REMINDERS_ENABLED": "false"
+  },
+  "triggers": {
+    "crons": ["*/10 * * * *", "0 1 * * *", "0 13 * * *"]
+  },
   "workers_dev": true
 }
